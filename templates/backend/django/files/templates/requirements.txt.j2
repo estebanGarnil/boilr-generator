@@ -1,0 +1,27 @@
+{% for dep in dependencies.base %}
+{{ dep }}
+{% endfor %}
+
+{% if options.rest_framework %}
+{% for dep in dependencies.rest_framework %}
+{{ dep }}
+{% endfor %}
+{% endif %}
+
+{% if options.cors %}
+{% for dep in dependencies.cors %}
+{{ dep }}
+{% endfor %}
+{% endif %}
+
+{% if db_engine in ["postgres", "postgresql"] %}
+{% for dep in dependencies.postgres %}
+{{ dep }}
+{% endfor %}
+{% endif %}
+
+{% if db_engine == "mysql" %}
+{% for dep in dependencies.mysql %}
+{{ dep }}
+{% endfor %}
+{% endif %}

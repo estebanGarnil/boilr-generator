@@ -1,0 +1,89 @@
+meta:
+  name: PostgreSQL
+  key: postgres
+  type: database
+  version: 1.0.0
+  description: PostgreSQL database service for dockerized projects
+  tags:
+    - database
+    - sql
+    - postgres
+    - postgresql
+
+role:
+  group: database
+  unique: true
+
+requirements:
+  mandatory: []
+  optional: []
+
+compatibility:
+  backend:
+    - django
+
+variables:
+  db_name:
+    type: string
+    required: true
+    description: Database name
+
+  db_user:
+    type: string
+    required: true
+    description: Database user
+
+  db_password:
+    type: string
+    required: true
+    description: Database password
+
+  db_port:
+    type: int
+    required: true
+    default: 5432
+    description: PostgreSQL exposed port
+
+options: {}
+
+assembly:
+  priority: 50
+  destination_root: database
+
+sources:
+  copy: []
+  render: []
+
+docker:
+  services:
+    db:
+      image: postgres:16
+      restart: unless-stopped
+
+      environment:
+        POSTGRES_DB: "{{ db_name }}"
+        POSTGRES_USER: "{{ db_user }}"
+        POSTGRES_PASSWORD: "{{ db_password }}"
+
+      ports:
+        - "{{ db_port }}:5432"
+
+      volumes:
+        - postgres_data:/var/lib/postgresql/data 
+  volumes:
+    postgres_data: {}
+
+exports:
+  env:
+    DB_ENGINE: postgresql
+    DB_HOST: db
+    DB_PORT: "{{ db_port }}"
+    DB_NAME: "{{ db_name }}"
+    DB_USER: "{{ db_user }}"
+    DB_PASSWORD: "{{ db_password }}"
+
+docs:
+  summary: Reusable PostgreSQL database module
+  notes:
+    - Uses official PostgreSQL Docker image
+    - Exposes service as db by convention
