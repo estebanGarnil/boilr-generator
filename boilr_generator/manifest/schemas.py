@@ -2,7 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from core import DuplicateModuleError
+from boilr_generator.core.exceptions import DuplicateModuleError
 
 class ProjectInfo(BaseModel):
     name: str 

@@ -1,6 +1,6 @@
 import pytest
 
-from boilr_generator.core import (
+from boilr_generator.core.exceptions import (
     BoilrError,
     DuplicateModuleError,
     ModuleNotFoundError,

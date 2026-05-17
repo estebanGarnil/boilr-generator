@@ -1,4 +1,5 @@
-from boilr_generator.core import ResolvedModule, ResolvedProject
+from boilr_generator.core import ResolvedModule
+from boilr_generator.core.project import ResolvedProject
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.resolver.validator import ProjectValidator

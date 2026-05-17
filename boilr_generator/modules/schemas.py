@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
-from boilr_generator.core import ModuleVariableError
+from boilr_generator.core.exceptions import ModuleVariableError
 
 # --- META / ROLE ---
 
