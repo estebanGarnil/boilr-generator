@@ -1,7 +1,7 @@
 import pytest
 
 from boilr_generator.modules.registry import ModuleRegistry
-
+from boilr_generator.core.exceptions import ModuleNotFoundError
 
 def test_registry_loads_available_modules(registry):
     keys = registry.list_keys()
@@ -37,5 +37,5 @@ def test_registry_lists_modules_by_type(registry):
 
 
 def test_registry_raises_for_unknown_module(registry):
-    with pytest.raises(ValueError):
+    with pytest.raises(ModuleNotFoundError):
         registry.get("unknown")
