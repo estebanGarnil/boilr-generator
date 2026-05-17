@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from boilr_generator.core import TemplateRenderError
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -80,7 +81,7 @@ elif DB_ENGINE == "mysql":
         }
     }
 else:
-    raise ValueError(f"Unsupported DB_ENGINE: {DB_ENGINE}")
+    raise TemplateRenderError(f"Unsupported DB_ENGINE: {DB_ENGINE}")
 
 LANGUAGE_CODE = "fr-fr"
 TIME_ZONE = "Europe/Paris"

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from boilr_generator.modules.loader import load_module_from_yaml
 from boilr_generator.modules.schemas import ModuleManifest
-
+from boilr_generator.core import DuplicateModuleError, ModuleNotFoundError
 
 class ModuleRegistry: 
     def __init__(self, base_path: str | Path):
@@ -19,19 +19,19 @@ class ModuleRegistry:
             key = module.meta.key 
 
             if key in self.modules: 
-                raise ValueError(f"Duplicate module key: {key}")
+                raise DuplicateModuleError(f"Duplicate module key: {key}")
             
             self.modules[key] = module
             self.module_path[key] = module_file.parent
 
     def get(self, key: str) -> ModuleManifest:
         if key not in self.modules: 
-            raise ValueError(f"Module not found: {key}")
+            raise ModuleNotFoundError(f"Module not found: {key}")
         return self.modules[key]
     
     def get_path(self, key: str) -> Path:
         if key not in self.module_path:
-            raise ValueError(f"Module path not found: {key}")
+            raise ModuleNotFoundError(f"Module path not found: {key}")
         return self.module_path[key]
     
     def has(self, key:str) -> bool:

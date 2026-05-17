@@ -2,6 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from core import DuplicateModuleError
 
 class ProjectInfo(BaseModel):
     name: str 
@@ -22,7 +23,7 @@ class ProjectManifest(BaseModel):
         keys = [module.key for module in self.modules]
 
         if len(keys) != len(set(keys)):
-            raise ValueError("Duplicate modules are not allowed.")
+            raise DuplicateModuleError("Duplicate modules are not allowed.")
         
         return self
     
