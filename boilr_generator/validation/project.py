@@ -19,13 +19,37 @@ def validate_project(
     """Validate a project manifest against the module registry."""
     result = ValidationResult()
 
-    try:
+    _validate_existing_modules(manifest, registry, result)
+
+    if not result.valid:
+        return result
+
+    _validate_resolution(manifest, registry, result)
+
+    return result
+
+def _validate_existing_modules(
+        manifest: ProjectManifest, 
+        registry: ModuleRegistry, 
+        result: ValidationResult,
+) -> None:
+    """Validate that all requested module exist."""
+    for module in manifest.modules:
+        if module.key not in registry.modules:
+            result.add_error(
+                code="module_not_found",
+                message=f"Module not found: {module.key}",
+                module=module.key
+            )
+
+def _validate_resolution(
+        manifest: ProjectManifest,
+        registry: ModuleRegistry,
+        result: ValidationResult,
+) -> None:
+    """Validate resolver rules."""
+    try: 
         Resolver(registry).resolve(manifest)
-    except ModuleNotFoundError as error:
-        result.add_error(
-            code="module_not_found",
-            message=str(error),
-        )
     except ModuleRequirementError as error:
         result.add_error(
             code="missing_requirement",
@@ -41,5 +65,4 @@ def validate_project(
             code="module_variable_error",
             message=str(error),
         )
-
-    return result
+    
