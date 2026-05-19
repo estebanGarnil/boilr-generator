@@ -68,3 +68,33 @@ def test_validate_project_detects_unknown_variable(
     assert result.errors[0].code == "unknown_variable"
     assert result.errors[0].module == "django"
     assert result.errors[0].field == "secrte_key"
+
+def test_validate_project_detects_unknown_option(
+        registry, 
+        valid_manifest_data,
+):
+    for module in valid_manifest_data["modules"]:
+        if module["key"] == "django":
+            module["options"]["rest_framwork"] = True
+    
+    manifest = load_project_manifest_from_dict(valid_manifest_data)
+
+    result = validate_project(manifest, registry)
+
+    assert result.valid is False
+    assert result.errors[0].code == "unknown_option"
+
+def test_validate_project_detects_invalid_option_type(
+        registry, 
+        valid_manifest_data,
+): 
+    for module in valid_manifest_data["modules"]:
+        if module["key"] == "django":
+            module["options"]["cors"] = "yes"
+    
+    manifest = load_project_manifest_from_dict(valid_manifest_data)
+
+    result = validate_project(manifest, registry)
+
+    assert result.valid is False
+    assert result.errors[0].code == "invalid_option_type"
