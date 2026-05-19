@@ -40,6 +40,10 @@ def valid_manifest_data() -> dict:
                 "variables": {
                     "project_name": "my_app",
                     "secret_key": "dev-secret",
+                    "django_settings_module": "config.settings",
+                    "allowed_hosts": ["localhost", "127.0.0.1"],
+                    "backend_port": 8000,
+                    "debug": True,
                     "db_engine": "postgresql",
                     "db_host": "db",
                     "db_port": 5432,

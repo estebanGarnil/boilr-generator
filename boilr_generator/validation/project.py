@@ -24,6 +24,16 @@ def validate_project(
     if not result.valid:
         return result
 
+    _validate_required_variables(manifest, registry, result)
+
+    if not result.valid:
+        return result
+    
+    _validate_variable_types(manifest, registry, result)
+
+    if not result.valid:
+        return result
+
     _validate_resolution(manifest, registry, result)
 
     return result
@@ -66,3 +76,61 @@ def _validate_resolution(
             message=str(error),
         )
     
+def _validate_required_variables(
+    manifest: ProjectManifest,
+    registry: ModuleRegistry,
+    result: ValidationResult,
+) -> None:
+    """Validate required module variables."""
+    for project_module in manifest.modules:
+        module_manifest = registry.get(project_module.key)
+
+        for variable_name, variable in module_manifest.variables.items():
+            if not variable.required:
+                continue
+
+            if variable_name not in project_module.variables:
+                result.add_error(
+                    code="missing_required_variable",
+                    message=(
+                        f"Variable {variable_name} is required "
+                        f"for module {project_module.key}."
+                    ),
+                    module=project_module.key,
+                    field=variable_name,
+                )
+
+def _validate_variable_types(
+        manifest: ProjectManifest, 
+        registry: ModuleRegistry, 
+        result: ValidationResult,
+) -> None:
+    """Validate module variable types."""
+    type_mapping = {
+        "string":str,
+        "int":int,
+        "boolean":bool,
+        "list":list,
+    }
+
+    for project_module in manifest.modules:
+        module_manifest = registry.get(project_module.key)
+
+        for variable_name, value in project_module.variables.items():
+            definition = module_manifest.variables.get(variable_name)
+
+            if definition is None:
+                continue
+                
+            expected_type = type_mapping[definition.type]
+
+            if not isinstance(value, expected_type):
+                result.add_error(
+                    code="invalid_variable_type",
+                    message=(
+                        f"Variable {variable_name} for module "
+                        f"{project_module.key} must be of type {definition.type}."
+                    ),
+                    module=project_module.key,
+                    field=variable_name,
+                )

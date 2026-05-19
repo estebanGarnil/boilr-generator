@@ -62,3 +62,20 @@ def test_validate_project_collects_multiple_unknown_modules(
     assert result.errors[0].module == "unknown_backend"
     assert result.errors[1].code == "module_not_found"
     assert result.errors[1].module == "unknown_database"
+
+def test_validate_project_collects_missing_required_variables(
+    registry,
+    valid_manifest_data,
+):
+    for module in valid_manifest_data["modules"]:
+        if module["key"] == "postgres":
+            module["variables"] = {}
+
+    manifest = load_project_manifest_from_dict(valid_manifest_data)
+
+    result = validate_project(manifest, registry)
+
+    assert result.valid is False
+    assert len(result.errors) >= 1
+    assert result.errors[0].code == "missing_required_variable"
+    assert result.errors[0].module == "postgres"
