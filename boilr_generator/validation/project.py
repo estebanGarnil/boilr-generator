@@ -29,6 +29,11 @@ def validate_project(
     if not result.valid:
         return result
     
+    _validate_unknown_variables(manifest, registry, result)
+
+    if not result.valid:
+        return result
+    
     _validate_variable_types(manifest, registry, result)
 
     if not result.valid:
@@ -133,4 +138,26 @@ def _validate_variable_types(
                     ),
                     module=project_module.key,
                     field=variable_name,
+                )
+
+def _validate_unknown_variables(
+        manifest: ProjectManifest, 
+        registry: ModuleRegistry,
+        result: ValidationResult,
+) -> None: 
+    """Validate that provided variables are declared by the module."""
+    for project_module in manifest.modules:
+        module_manifest = registry.get(project_module.key)
+        allowed_variables = set(module_manifest.variables.keys())
+
+        for variables_name in project_module.variables:
+            if variables_name not in allowed_variables:
+                result.add_error(
+                    code="unknown_variable",
+                    message=(
+                        f"Variable {variables_name} is not declared "
+                        f"for module {project_module.key}."
+                    ),
+                    module=project_module.key,
+                    field=variables_name,
                 )

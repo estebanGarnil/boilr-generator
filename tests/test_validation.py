@@ -51,3 +51,20 @@ def test_validate_project_detects_invalid_variable_type(
     assert result.errors[0].module == "django"
     assert result.errors[0].field == "debug"
 
+def test_validate_project_detects_unknown_variable(
+    registry,
+    valid_manifest_data,
+):
+    for module in valid_manifest_data["modules"]:
+        if module["key"] == "django":
+            module["variables"]["secrte_key"] = "typo"
+
+    manifest = load_project_manifest_from_dict(valid_manifest_data)
+
+    result = validate_project(manifest, registry)
+
+    assert result.valid is False
+    assert len(result.errors) == 1
+    assert result.errors[0].code == "unknown_variable"
+    assert result.errors[0].module == "django"
+    assert result.errors[0].field == "secrte_key"
