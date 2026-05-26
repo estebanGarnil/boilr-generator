@@ -48,6 +48,11 @@ def validate_project(
 
     if not result.valid:
         return result
+    
+    _validate_requirements(manifest, registry, result)
+    
+    if not result.valid:
+        return result
 
     _validate_resolution(manifest, registry, result)
 
@@ -228,4 +233,33 @@ def _validate_option_types(
                     ),
                     module=project_module.key,
                     field=option_name,
+                )
+
+
+def _validate_requirements(
+        manifest: ProjectManifest, 
+        registry: ModuleRegistry, 
+        result: ValidationResult,
+) -> None:
+    """Validate mandatory module requirements."""
+    selected_modules = [
+        registry.get(project_module.key)
+        for project_module in manifest.modules
+    ]
+
+    selected_types = {
+        module.meta.type for module in selected_modules
+    }
+
+    for module in selected_modules: 
+        for requirement in module.requirements.mandatory:
+            if requirement.type not in selected_types:
+                result.add_error(
+                    code="missing_requirement",
+                    message=(
+                        f"Module {module.meta.key} requires "
+                        f"a module of type {requirement.type}."
+                    ),
+                    module=module.meta.key,
+                    field=requirement.type,
                 )
