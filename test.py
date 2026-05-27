@@ -15,20 +15,21 @@ plan = generator.plan(
     output_path="output/my_app",
 )
 
-print("\n=== SUMMARY ===")
-pprint(plan.summary)
+pprint(plan.to_dict())
+# print("\n=== SUMMARY ===")
+# pprint(plan.summary)
 
-print("\n=== DOCKER SERVICES ===")
-pprint(plan.docker_services)
+# print("\n=== DOCKER SERVICES ===")
+# pprint(plan.docker_services)
 
-print("\n=== ENV VARIABLES ===")
-pprint(plan.env_variables)
+# print("\n=== ENV VARIABLES ===")
+# pprint(plan.env_variables)
 
-print("\n=== FILES ===")
+# print("\n=== FILES ===")
 
-for file in plan.files:
-    print(
-        f"[{file.action.upper():10}] "
-        f"[{file.operation.upper():8}] "
-        f"{file.relative_destination_path}"
-    )
+# for file in plan.files:
+#     print(
+#         f"[{file.action.upper():10}] "
+#         f"[{file.operation.upper():8}] "
+#         f"{file.relative_destination_path}"
+#     )

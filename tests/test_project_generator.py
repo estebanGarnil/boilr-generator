@@ -158,3 +158,18 @@ def test_project_generator_plan_contains_file_operations(
 
     assert "copy" in operations or "render" in operations
     assert "generate" in operations
+
+def test_generation_plan_can_be_serialized(
+    registry,
+    manifest,
+    tmp_path,
+):
+    generator = ProjectGenerator(registry)
+
+    plan = generator.plan(manifest, tmp_path)
+
+    data = plan.to_dict()
+
+    assert data["summary"]["files_count"] == len(plan.files)
+    assert isinstance(data["files"], list)
+    assert data["files"][0]["relative_destination_path"]
