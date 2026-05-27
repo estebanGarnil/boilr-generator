@@ -46,3 +46,22 @@ class GenerationPlan:
             "docker_services_count": len(self.docker_services),
             "env_variables_count": len(self.env_variables),
         }
+
+    def to_dict(self) -> dict:
+        return {
+            "output_path": str(self.output_path),
+            "summary": self.summary,
+            "docker_services": self.docker_services,
+            "env_variables": self.env_variables,
+            "files": [
+                {
+                    "source_path": str(file.source_path) if file.source_path else None,
+                    "destination_path": str(file.destination_path),
+                    "relative_destination_path": file.relative_destination_path,
+                    "operation": file.operation,
+                    "action": file.action,
+                    "module": file.module,
+                }
+                for file in self.files
+            ],
+        }
