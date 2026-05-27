@@ -1,15 +1,24 @@
 """Project validation service."""
 
+from typing import Any
+
 from boilr_generator.core.exceptions import (
     ModuleCompatibilityError,
-    ModuleNotFoundError,
     ModuleRequirementError,
     ModuleVariableError,
 )
 from boilr_generator.core.validation import ValidationResult
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
+from boilr_generator.modules.schemas import ModuleManifest
 from boilr_generator.resolver import Resolver
+
+TYPE_MAPPING: dict[str, type] = {
+    "string": str,
+    "int": int,
+    "boolean": bool,
+    "list": list,
+}
 
 
 def validate_project(
@@ -24,33 +33,10 @@ def validate_project(
     if not result.valid:
         return result
 
-    _validate_required_variables(manifest, registry, result)
-
-    if not result.valid:
-        return result
-    
-    _validate_unknown_variables(manifest, registry, result)
-
-    if not result.valid:
-        return result
-    
-    _validate_variable_types(manifest, registry, result)
-
-    if not result.valid:
-        return result
-    
-    _validate_unknown_options(manifest, registry, result)
-
-    if not result.valid:
-        return result
-    
-    _validate_option_types(manifest, registry, result)
-
-    if not result.valid:
-        return result
-    
+    _validate_module_inputs(manifest, registry, result)
     _validate_requirements(manifest, registry, result)
-    
+    _validate_unique_roles(manifest, registry, result)
+
     if not result.valid:
         return result
 
@@ -58,27 +44,223 @@ def validate_project(
 
     return result
 
+
 def _validate_existing_modules(
-        manifest: ProjectManifest, 
-        registry: ModuleRegistry, 
-        result: ValidationResult,
+    manifest: ProjectManifest,
+    registry: ModuleRegistry,
+    result: ValidationResult,
 ) -> None:
-    """Validate that all requested module exist."""
-    for module in manifest.modules:
-        if module.key not in registry.modules:
+    """Validate that all requested modules exist."""
+    for project_module in manifest.modules:
+        if registry.has(project_module.key):
+            continue
+
+        result.add_error(
+            code="module_not_found",
+            message=f"Module not found: {project_module.key}.",
+            module=project_module.key,
+        )
+
+
+def _validate_module_inputs(
+    manifest: ProjectManifest,
+    registry: ModuleRegistry,
+    result: ValidationResult,
+) -> None:
+    """Validate variables and options for all selected modules."""
+    for project_module in manifest.modules:
+        module_manifest = registry.get(project_module.key)
+
+        _validate_required_variables(
+            project_module_key=project_module.key,
+            provided_variables=project_module.variables,
+            module_manifest=module_manifest,
+            result=result,
+        )
+
+        _validate_unknown_fields(
+            project_module_key=project_module.key,
+            provided_fields=project_module.variables,
+            declared_fields=module_manifest.variables.keys(),
+            field_kind="variable",
+            result=result,
+        )
+
+        _validate_field_types(
+            project_module_key=project_module.key,
+            provided_fields=project_module.variables,
+            definitions=module_manifest.variables,
+            field_kind="variable",
+            result=result,
+        )
+
+        _validate_unknown_fields(
+            project_module_key=project_module.key,
+            provided_fields=project_module.options,
+            declared_fields=module_manifest.options.keys(),
+            field_kind="option",
+            result=result,
+        )
+
+        _validate_field_types(
+            project_module_key=project_module.key,
+            provided_fields=project_module.options,
+            definitions=module_manifest.options,
+            field_kind="option",
+            result=result,
+        )
+
+
+def _validate_required_variables(
+    project_module_key: str,
+    provided_variables: dict[str, Any],
+    module_manifest: ModuleManifest,
+    result: ValidationResult,
+) -> None:
+    """Validate required module variables."""
+    for variable_name, variable in module_manifest.variables.items():
+        if not variable.required:
+            continue
+
+        if variable_name in provided_variables:
+            continue
+
+        result.add_error(
+            code="missing_required_variable",
+            message=(
+                f"Variable {variable_name} is required "
+                f"for module {project_module_key}."
+            ),
+            module=project_module_key,
+            field=variable_name,
+        )
+
+
+def _validate_unknown_fields(
+    project_module_key: str,
+    provided_fields: dict[str, Any],
+    declared_fields,
+    field_kind: str,
+    result: ValidationResult,
+) -> None:
+    """Validate that provided fields are declared by the module."""
+    declared_field_set = set(declared_fields)
+
+    for field_name in provided_fields:
+        if field_name in declared_field_set:
+            continue
+
+        result.add_error(
+            code=f"unknown_{field_kind}",
+            message=(
+                f"{field_kind.capitalize()} {field_name} is not declared "
+                f"for module {project_module_key}."
+            ),
+            module=project_module_key,
+            field=field_name,
+        )
+
+
+def _validate_field_types(
+    project_module_key: str,
+    provided_fields: dict[str, Any],
+    definitions,
+    field_kind: str,
+    result: ValidationResult,
+) -> None:
+    """Validate provided field types."""
+    for field_name, value in provided_fields.items():
+        definition = definitions.get(field_name)
+
+        if definition is None:
+            continue
+
+        expected_type = TYPE_MAPPING[definition.type]
+
+        if isinstance(value, expected_type):
+            continue
+
+        result.add_error(
+            code=f"invalid_{field_kind}_type",
+            message=(
+                f"{field_kind.capitalize()} {field_name} for module "
+                f"{project_module_key} must be of type {definition.type}."
+            ),
+            module=project_module_key,
+            field=field_name,
+        )
+
+
+def _validate_requirements(
+    manifest: ProjectManifest,
+    registry: ModuleRegistry,
+    result: ValidationResult,
+) -> None:
+    """Validate mandatory module requirements."""
+    selected_modules = [
+        registry.get(project_module.key)
+        for project_module in manifest.modules
+    ]
+
+    selected_types = {module.meta.type for module in selected_modules}
+
+    for module in selected_modules:
+        for requirement in module.requirements.mandatory:
+            if requirement.type in selected_types:
+                continue
+
             result.add_error(
-                code="module_not_found",
-                message=f"Module not found: {module.key}",
-                module=module.key
+                code="missing_requirement",
+                message=(
+                    f"Module {module.meta.key} requires "
+                    f"a module of type {requirement.type}."
+                ),
+                module=module.meta.key,
+                field=requirement.type,
             )
 
+
+def _validate_unique_roles(
+    manifest: ProjectManifest,
+    registry: ModuleRegistry,
+    result: ValidationResult,
+) -> None:
+    """Validate unique module roles."""
+    selected_modules = [
+        registry.get(project_module.key)
+        for project_module in manifest.modules
+    ]
+
+    seen_groups: dict[str, str] = {}
+
+    for module in selected_modules:
+        if not module.role.unique:
+            continue
+
+        group = module.role.group
+
+        if group not in seen_groups:
+            seen_groups[group] = module.meta.key
+            continue
+
+        result.add_error(
+            code="duplicate_unique_role",
+            message=(
+                f"Modules {seen_groups[group]} and {module.meta.key} "
+                f"cannot both be used because role {group} is unique."
+            ),
+            module=module.meta.key,
+            field=group,
+        )
+
+
 def _validate_resolution(
-        manifest: ProjectManifest,
-        registry: ModuleRegistry,
-        result: ValidationResult,
+    manifest: ProjectManifest,
+    registry: ModuleRegistry,
+    result: ValidationResult,
 ) -> None:
     """Validate resolver rules."""
-    try: 
+    try:
         Resolver(registry).resolve(manifest)
     except ModuleRequirementError as error:
         result.add_error(
@@ -95,171 +277,3 @@ def _validate_resolution(
             code="module_variable_error",
             message=str(error),
         )
-    
-def _validate_required_variables(
-    manifest: ProjectManifest,
-    registry: ModuleRegistry,
-    result: ValidationResult,
-) -> None:
-    """Validate required module variables."""
-    for project_module in manifest.modules:
-        module_manifest = registry.get(project_module.key)
-
-        for variable_name, variable in module_manifest.variables.items():
-            if not variable.required:
-                continue
-
-            if variable_name not in project_module.variables:
-                result.add_error(
-                    code="missing_required_variable",
-                    message=(
-                        f"Variable {variable_name} is required "
-                        f"for module {project_module.key}."
-                    ),
-                    module=project_module.key,
-                    field=variable_name,
-                )
-
-def _validate_variable_types(
-        manifest: ProjectManifest, 
-        registry: ModuleRegistry, 
-        result: ValidationResult,
-) -> None:
-    """Validate module variable types."""
-    type_mapping = {
-        "string":str,
-        "int":int,
-        "boolean":bool,
-        "list":list,
-    }
-
-    for project_module in manifest.modules:
-        module_manifest = registry.get(project_module.key)
-
-        for variable_name, value in project_module.variables.items():
-            definition = module_manifest.variables.get(variable_name)
-
-            if definition is None:
-                continue
-                
-            expected_type = type_mapping[definition.type]
-
-            if not isinstance(value, expected_type):
-                result.add_error(
-                    code="invalid_variable_type",
-                    message=(
-                        f"Variable {variable_name} for module "
-                        f"{project_module.key} must be of type {definition.type}."
-                    ),
-                    module=project_module.key,
-                    field=variable_name,
-                )
-
-def _validate_unknown_variables(
-        manifest: ProjectManifest, 
-        registry: ModuleRegistry,
-        result: ValidationResult,
-) -> None: 
-    """Validate that provided variables are declared by the module."""
-    for project_module in manifest.modules:
-        module_manifest = registry.get(project_module.key)
-        allowed_variables = set(module_manifest.variables.keys())
-
-        for variables_name in project_module.variables:
-            if variables_name not in allowed_variables:
-                result.add_error(
-                    code="unknown_variable",
-                    message=(
-                        f"Variable {variables_name} is not declared "
-                        f"for module {project_module.key}."
-                    ),
-                    module=project_module.key,
-                    field=variables_name,
-                )
-
-def _validate_unknown_options(
-        manifest: ProjectManifest, 
-        registry: ModuleRegistry, 
-        result: ValidationResult,
-) -> None:
-    """Validate that provided options are declared by the module."""
-    for project_module in manifest.modules:
-        module_manifest = registry.get(project_module.key)
-        allowed_options = set(module_manifest.options.keys())
-
-        for option_name in project_module.options:
-            if option_name not in allowed_options: 
-                result.add_error(
-                    code="unknown_option",
-                    message=(
-                        f"Option {option_name} is not declared "
-                        f"for module {project_module.key}."
-                    ),
-                    module=project_module.key,
-                    field=option_name,
-                )
-
-def _validate_option_types(
-        manifest: ProjectManifest,
-        registry: ModuleRegistry,
-        result: ValidationResult,
-) -> None:
-    """Validate module option types."""
-    type_mapping = {
-        "string": str,
-        "int" : int, 
-        "boolean": bool,
-        "list": list,
-    }
-
-    for project_module in manifest.modules:
-        module_manifest = registry.get(project_module.key)
-
-        for option_name, value in project_module.options.items():
-            definition = module_manifest.options.get(option_name)
-
-            if definition is None:
-                continue
-
-            expected_type = type_mapping[definition.type]
-
-            if not isinstance(value, expected_type):
-                result.add_error(
-                    code="invalid_option_type",
-                    message=(
-                        f"Option {option_name} for module "
-                        f"{project_module.key} must be of type "
-                        f"{definition.type}."
-                    ),
-                    module=project_module.key,
-                    field=option_name,
-                )
-
-
-def _validate_requirements(
-        manifest: ProjectManifest, 
-        registry: ModuleRegistry, 
-        result: ValidationResult,
-) -> None:
-    """Validate mandatory module requirements."""
-    selected_modules = [
-        registry.get(project_module.key)
-        for project_module in manifest.modules
-    ]
-
-    selected_types = {
-        module.meta.type for module in selected_modules
-    }
-
-    for module in selected_modules: 
-        for requirement in module.requirements.mandatory:
-            if requirement.type not in selected_types:
-                result.add_error(
-                    code="missing_requirement",
-                    message=(
-                        f"Module {module.meta.key} requires "
-                        f"a module of type {requirement.type}."
-                    ),
-                    module=module.meta.key,
-                    field=requirement.type,
-                )
