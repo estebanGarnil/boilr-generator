@@ -11,6 +11,7 @@ from boilr_generator.generation.files import FileGenerator
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.resolver import Resolver
+from boilr_generator.core.generation_plan import GenerationPlan, PlannedFile
 
 
 class ProjectGenerator:
@@ -27,22 +28,82 @@ class ProjectGenerator:
         output_path: str | Path,
         clean: bool = False,
     ) -> ResolvedProject:
+        plan = self.plan(manifest, output_path)
+        self.execute(plan, clean=clean)
+
+        return plan.resolved_project
+
+    def plan(
+        self, 
+        manifest: ProjectManifest, 
+        output_path: str | Path,
+    ) -> GenerationPlan:
         output_path = Path(output_path)
+        resolved_project = self.resolver.resolve(manifest)
+
+        files: list[PlannedFile] = []
+
+        for module in resolved_project.ordered_modules():
+            for source in module.manifest.sources.copy_sources:
+                files.append(
+                    PlannedFile(
+                        path=output_path / source.to,
+                        action="overwrite" if (output_path / source.to).exists() else "create",
+                    )
+                )
+            
+            for source in module.manifest.sources.render: 
+                files.append(
+                    PlannedFile(
+                        path=output_path / source.to,
+                        action ="overwrite" if (output_path / source.to).exists() else "create",
+                    )
+                )
+        
+        files.append(
+            PlannedFile(
+                path=output_path / "docker-compose.yml",
+                action="overwrite" if (output_path / "docker-compose.yml").exists() else "create"
+            )
+        )
+
+        files.append(
+            PlannedFile(
+                path=output_path / ".env", 
+                action="overwrite" if (output_path / ".env").exists() else "create"
+            )
+        )
+
+        docker_compose = self.docker_generator.generate(resolved_project)
+        env = self.env_generator.generate(resolved_project)
+
+        return GenerationPlan(
+            resolved_project=resolved_project,
+            output_path=output_path, 
+            files=files, 
+            docker_services=list(docker_compose.get("services", {}).keys()),
+            env_variables=list(env.keys())
+        )
+
+    def execute(
+        self, 
+        plan: GenerationPlan, 
+        clean: bool = False,
+    ) -> None:
+        output_path = plan.output_path
 
         if clean and output_path.exists():
             shutil.rmtree(output_path)
-
+        
         output_path.mkdir(parents=True, exist_ok=True)
 
-        resolved_project = self.resolver.resolve(manifest)
+        resolved_project = plan.resolved_project
 
         self.file_generator.copy_sources(resolved_project, output_path)
         self.file_generator.render_sources(resolved_project, output_path)
 
         self._write_docker_compose(resolved_project, output_path)
         self._write_env_file(resolved_project, output_path)
-
-        return resolved_project
 
     def _write_docker_compose(
         self,
