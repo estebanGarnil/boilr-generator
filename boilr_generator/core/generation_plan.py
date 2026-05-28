@@ -1,7 +1,8 @@
 """Generation planning models."""
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from boilr_generator.core.project import ResolvedProject
 
@@ -47,21 +48,25 @@ class GenerationPlan:
             "env_variables_count": len(self.env_variables),
         }
 
-    def to_dict(self) -> dict:
-        return {
-            "output_path": str(self.output_path),
-            "summary": self.summary,
-            "docker_services": self.docker_services,
-            "env_variables": self.env_variables,
-            "files": [
-                {
-                    "source_path": str(file.source_path) if file.source_path else None,
-                    "destination_path": str(file.destination_path),
-                    "relative_destination_path": file.relative_destination_path,
-                    "operation": file.operation,
-                    "action": file.action,
-                    "module": file.module,
-                }
-                for file in self.files
-            ],
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+
+        data["output_path"] = str(self.output_path)
+        data["resolved_project"] = {
+            "name": self.resolved_project.project.name,
+            "type": self.resolved_project.project.type,
+            "version": self.resolved_project.project.version,
+            "modules": self.resolved_project.list_module_keys(),
         }
+
+        for file in data["files"]:
+            file["source_path"] = (
+                str(file["source_path"])
+                if file["source_path"] is not None
+                else None
+            )
+            file["destination_path"] = str(file["destination_path"])
+
+        data["summary"] = self.summary
+
+        return data
