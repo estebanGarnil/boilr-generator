@@ -1,5 +1,6 @@
 # Boilr Generator
 
+> 🚧 Currently developed and maintained by a single contributor.
 Boilr Generator is a modular project scaffolding engine designed to generate complete dockerized application stacks from reusable modules.
 
 Instead of maintaining dozens of project templates, Boilr allows you to describe a project using YAML or JSON and generate a complete, ready-to-run application structure.
@@ -40,12 +41,44 @@ Redis
 Nginx
 ```
 
+For example, a user could generate:
+
+- Django + PostgreSQL
+- FastAPI + MongoDB
+- NestJS + Redis + RabbitMQ
+- React + FastAPI + PostgreSQL
+
+without maintaining separate project templates.
+
 The engine validates, resolves and assembles the final stack automatically.
 
 The generated project is designed to run immediately using Docker Compose.
 
-```
-```
+## Vision
+
+Boilr aims to become a modular ecosystem for building complete Dockerized application stacks.
+
+The long-term goal is to allow developers to assemble projects from reusable modules through:
+
+- a CLI
+- a backend API
+- a web interface
+
+Rather than maintaining hundreds of project templates, contributors can build reusable modules that work together across the ecosystem.
+
+
+## Why I Started Boilr
+
+Like many developers, I found myself rebuilding the same foundations over and over again:
+
+a backend, a database, Docker configuration, environment variables, and deployment setup.
+
+At first, project templates seemed like the obvious solution. But as the number of projects and technologies grew, maintaining those templates became more difficult than maintaining the projects themselves.
+
+Boilr was born from a simple idea:
+
+instead of maintaining reusable projects, maintain reusable modules that can be assembled together to create complete Dockerized application stacks.
+
 
 
 ## Architecture
@@ -161,8 +194,13 @@ modules:
 ```text
 blog/
 ├── backend/
+│   ├── manage.py
+│   ├── requirements.txt
+│   └── config/
+│
 ├── docker-compose.yml
-└── .env
+├── .env
+└── README.md
 ```
 
 ---
@@ -181,8 +219,6 @@ blog/
 * Template rendering
 * Fully tested
 
-```
-```
 
 
 ---
@@ -206,6 +242,20 @@ More modules are planned.
 
 ---
 
+## Project Status
+
+Boilr is currently under active development.
+
+The core generation engine is functional, tested and already capable of generating complete Dockerized application stacks.
+
+Current focus areas:
+
+- Django API
+- CLI
+- Module ecosystem growth
+- Frontend interface
+
+
 ## Roadmap
 
 ### Core Engine
@@ -224,6 +274,13 @@ More modules are planned.
 * [ ] Web Interface
 * [ ] Module marketplace
 
+### Ecosystem
+
+- [ ] React module
+- [ ] Vue module
+- [ ] FastAPI module
+- [ ] MongoDB module
+- [ ] RabbitMQ module
 ---
 
 ## Contributing
@@ -284,9 +341,27 @@ Current test coverage includes:
 
 ---
 
+## About the Project
+
+Boilr is currently developed and maintained by a single contributor.
+
+The project started as an exploration of a simple question:
+
+How can we generate complete Dockerized application stacks without maintaining dozens of independent templates?
+
+Today, the core engine is functional and tested, but the ecosystem is still in its early stages.
+
+Contributions are highly appreciated, whether through:
+
+- new modules
+- improvements to existing modules
+- documentation
+- testing
+- engine improvements
+
+If the project interests you, don't hesitate to open an issue or start a discussion.
+
 ## License
 
 MIT License
 
-```
-```

@@ -156,5 +156,18 @@ See:
 - CONTRIBUTING.md
 - docs/creating-a-module.md
 
-```
-```
+## A Note from the Maintainer
+
+Boilr is currently maintained by a single developer.
+
+The project already includes:
+
+- a validation system
+- a resolver
+- a generation engine
+- a dry-run system
+- automated tests
+
+The next challenge is growing the ecosystem.
+
+If you are familiar with a technology that is not yet supported, creating or improving a module is one of the most impactful ways to help the project.
