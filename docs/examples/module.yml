@@ -1,0 +1,204 @@
+meta:
+  name: Django
+  key: django
+  type: backend
+  version: 1.0.0
+  description: Django backend ready for dockerized projects
+  tags:
+    - python
+    - django
+    - backend
+    - api
+
+role:
+  group: backend
+  unique: true
+
+requirements:
+  mandatory:
+    - type: database
+      unique: true
+  optional:
+    - type: cache
+    - type: proxy
+
+dependencies:
+  base:
+    - Django>=5.0,<6.0
+    - gunicorn>=21.2.0
+    - python-dotenv>=1.0.0
+
+  rest_framework:
+    - djangorestframework>=3.15.0
+
+  cors:
+    - django-cors-headers>=4.3.1
+
+  postgres:
+    - psycopg[binary]
+
+  mysql:
+    - mysqlclient
+
+compatibility:
+  frontend:
+    - vue
+    - react
+  database:
+    - postgres
+    - mysql
+  cache:
+    - redis
+  proxy:
+    - nginx
+
+variables:
+  project_name:
+    type: string
+    required: true
+    description: Name of the project
+
+  django_settings_module:
+    type: string
+    required: true
+    default: config.settings.local
+    description: Django settings module
+
+  backend_port:
+    type: int
+    required: true
+    default: 8000
+    description: Port exposed by the backend container
+
+  secret_key:
+    type: string
+    required: true
+    description: Django secret key
+
+  debug:
+    type: boolean
+    required: true
+    default: true
+    description: Enable debug mode
+
+  allowed_hosts:
+    type: list
+    required: true
+    default:
+      - localhost
+      - 127.0.0.1
+    description: Allowed hosts
+
+  db_engine:
+    type: string
+    required: true
+    description: Database engine (postgresql, mysql)
+
+  db_host:
+    type: string
+    required: true
+    default: db
+    description: Database host service name
+
+  db_port:
+    type: int
+    required: true
+    description: Database port
+
+  db_name:
+    type: string
+    required: true
+    description: Database name
+
+  db_user:
+    type: string
+    required: true
+    description: Database user
+
+  db_password:
+    type: string
+    required: true
+    description: Database password
+
+options:
+  rest_framework:
+    type: boolean
+    default: true
+    description: Enable Django REST Framework
+
+  cors:
+    type: boolean
+    default: true
+    description: Enable CORS headers
+
+assembly:
+  priority: 100
+  destination_root: backend
+
+sources:
+  copy:
+    - from: files/apps
+      to: backend/apps
+      strategy: merge
+
+    - from: files/config
+      to: backend/config
+      strategy: merge
+
+  render:
+    - from: files/templates/manage.py.j2
+      to: backend/manage.py
+
+    - from: files/templates/Dockerfile.j2
+      to: backend/Dockerfile
+
+    - from: files/templates/requirements.txt.j2
+      to: backend/requirements.txt
+
+    - from: files/templates/settings_base.py.j2
+      to: backend/config/settings/base.py
+
+docker:
+  services:
+    backend:
+      build:
+        context: ./backend
+        dockerfile: Dockerfile
+
+      command: >
+        sh -c "
+        python manage.py migrate &&
+        python manage.py runserver 0.0.0.0:8000
+        "
+
+      volumes:
+        - ./backend:/app
+
+      ports:
+        - "{{ backend_port }}:8000"
+
+      depends_on:
+        - db  # convention: database service name = "db"
+
+      env_file:
+        - .env
+
+exports:
+  env:
+    DJANGO_SETTINGS_MODULE: "{{ django_settings_module }}"
+    DJANGO_SECRET_KEY: "{{ secret_key }}"
+    DJANGO_DEBUG: "{{ debug }}"
+    DJANGO_ALLOWED_HOSTS: "{{ allowed_hosts | join(',') }}"
+
+    DB_ENGINE: "{{ db_engine }}"
+    DB_HOST: "{{ db_host }}"
+    DB_PORT: "{{ db_port }}"
+    DB_NAME: "{{ db_name }}"
+    DB_USER: "{{ db_user }}"
+    DB_PASSWORD: "{{ db_password }}"
+
+docs:
+  summary: Reusable Django backend module
+  notes:
+    - Supports PostgreSQL and MySQL
+    - Can enable DRF and CORS
