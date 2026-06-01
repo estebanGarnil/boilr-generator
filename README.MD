@@ -1,6 +1,7 @@
 # Boilr Generator
 
 > 🚧 Currently developed and maintained by a single contributor.
+
 Boilr Generator is a modular project scaffolding engine designed to generate complete dockerized application stacks from reusable modules.
 
 Instead of maintaining dozens of project templates, Boilr allows you to describe a project using YAML or JSON and generate a complete, ready-to-run application structure.
