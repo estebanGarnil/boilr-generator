@@ -71,13 +71,21 @@ Rather than maintaining hundreds of project templates, contributors can build re
 
 Boilr is intentionally interface-agnostic.
 
-The `project.yml` file is the contract between the user interface and the generator core.
+The project manifest is the contract between the user interface and the generator core.
+
+The manifest may be produced by:
+- a CLI
+- a web interface
+- a backend API
+- automation tools
+
+Boilr only focuses on validation, resolution and generation.
 You can build your own CLI, web app, SaaS interface, or internal automation tool on top of Boilr.
 
 ```
 CLI / Web UI / API / Automation
                 ↓
-          project.yml
+            manifest
                 ↓
        Boilr Generator Core
                 ↓
