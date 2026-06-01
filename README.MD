@@ -67,6 +67,23 @@ The long-term goal is to allow developers to assemble projects from reusable mod
 
 Rather than maintaining hundreds of project templates, contributors can build reusable modules that work together across the ecosystem.
 
+## Philosophy
+
+Boilr is intentionally interface-agnostic.
+
+The `project.yml` file is the contract between the user interface and the generator core.
+You can build your own CLI, web app, SaaS interface, or internal automation tool on top of Boilr.
+
+```
+CLI / Web UI / API / Automation
+                ↓
+          project.yml
+                ↓
+       Boilr Generator Core
+                ↓
+       Generated Application
+```
+
 
 ## Why I Started Boilr
 
@@ -85,7 +102,7 @@ instead of maintaining reusable projects, maintain reusable modules that can be 
 ## Architecture
 
 ```text
-project.yml / API JSON
+project.yml
         ↓
 ProjectManifest
         ↓
