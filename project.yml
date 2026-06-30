@@ -15,7 +15,6 @@ modules:
     variables:
       project_name: my_app
       secret_key: dev-secret
-      django_settings_module: config.settings
       allowed_hosts:
         - localhost
         - 127.0.0.1

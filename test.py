@@ -10,12 +10,13 @@ manifest = load_project_manifest_from_yaml("project.yml")
 
 generator = ProjectGenerator(registry)
 
-plan = generator.plan(
-    manifest=manifest,
-    output_path="output/my_app",
-)
+dry_run = generator.plan(manifest, "C:/Users/esteb/Documents/developpement/test_projet_generation")
 
-pprint(plan.to_dict())
+
+print(dry_run.summary)
+
+
+
 # print("\n=== SUMMARY ===")
 # pprint(plan.summary)
 

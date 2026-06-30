@@ -1,6 +1,5 @@
 from pathlib import Path
 import os
-from boilr_generator.core.exceptions import TemplateRenderError
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -56,32 +55,29 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
-DB_ENGINE = os.getenv("DB_ENGINE", "{{ db_engine }}")
-
-if DB_ENGINE in ("postgres", "postgresql"):
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("DB_NAME", "{{ db_name }}"),
-            "USER": os.getenv("DB_USER", "{{ db_user }}"),
-            "PASSWORD": os.getenv("DB_PASSWORD", "{{ db_password }}"),
-            "HOST": os.getenv("DB_HOST", "{{ db_host }}"),
-            "PORT": os.getenv("DB_PORT", "{{ db_port }}"),
-        }
+{% if db_engine in ["postgres", "postgresql"] %}
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME", "{{ db_name }}"),
+        "USER": os.getenv("DB_USER", "{{ db_user }}"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "{{ db_password }}"),
+        "HOST": os.getenv("DB_HOST", "{{ db_host }}"),
+        "PORT": os.getenv("DB_PORT", "{{ db_port }}"),
     }
-elif DB_ENGINE == "mysql":
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.mysql",
-            "NAME": os.getenv("DB_NAME", "{{ db_name }}"),
-            "USER": os.getenv("DB_USER", "{{ db_user }}"),
-            "PASSWORD": os.getenv("DB_PASSWORD", "{{ db_password }}"),
-            "HOST": os.getenv("DB_HOST", "{{ db_host }}"),
-            "PORT": os.getenv("DB_PORT", "{{ db_port }}"),
-        }
+}
+{% elif db_engine == "mysql" %}
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": os.getenv("DB_NAME", "{{ db_name }}"),
+        "USER": os.getenv("DB_USER", "{{ db_user }}"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "{{ db_password }}"),
+        "HOST": os.getenv("DB_HOST", "{{ db_host }}"),
+        "PORT": os.getenv("DB_PORT", "{{ db_port }}"),
     }
-else:
-    raise TemplateRenderError(f"Unsupported DB_ENGINE: {DB_ENGINE}")
+}
+{% endif %}
 
 LANGUAGE_CODE = "fr-fr"
 TIME_ZONE = "Europe/Paris"
