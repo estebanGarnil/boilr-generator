@@ -1,5 +1,4 @@
 from pathlib import Path
-import json
 
 import typer
 from rich import box
@@ -13,23 +12,42 @@ from boilr_generator.manifest import load_project_manifest_from_yaml
 from boilr_generator.modules.registry import ModuleRegistry
 
 
-app = typer.Typer(no_args_is_help=True, rich_markup_mode="rich")
+app = typer.Typer(
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+    help="Boilr project generator CLI.",
+)
+
 console = Console()
+
+TEMPLATES_DIR = Path("templates")
+
+
+
+def build_generator() -> ProjectGenerator:
+    registry = ModuleRegistry(str(TEMPLATES_DIR))
+    return ProjectGenerator(registry)
 
 
 def render_summary(summary: dict) -> None:
-    table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
-    table.add_column("Élément")
-    table.add_column("Valeur", justify="right")
+    table = Table(
+        title="Generation summary",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold",
+    )
+
+    table.add_column("Item")
+    table.add_column("Value", justify="right")
 
     labels = {
         "modules_count": "Modules",
-        "files_count": "Fichiers total",
-        "files_to_create": "Fichiers à créer",
-        "files_to_overwrite": "Fichiers à écraser",
-        "files_to_skip": "Fichiers ignorés",
-        "docker_services_count": "Services Docker",
-        "env_variables_count": "Variables .env",
+        "files_count": "Total files",
+        "files_to_create": "Files to create",
+        "files_to_overwrite": "Files to overwrite",
+        "files_to_skip": "Files to skip",
+        "docker_services_count": "Docker services",
+        "env_variables_count": "Environment variables",
     }
 
     for key, label in labels.items():
@@ -38,23 +56,23 @@ def render_summary(summary: dict) -> None:
     console.print(table)
 
 
-def render_project_info(info: dict) -> None:
-    project = info["resolved_project"]
+def render_project_info(plan: dict) -> None:
+    project = plan["resolved_project"]
 
     table = Table(box=box.SIMPLE, show_header=False)
-    table.add_column("Champ", style="bold")
-    table.add_column("Valeur")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
 
-    table.add_row("Nom", project["name"])
+    table.add_row("Name", project["name"])
     table.add_row("Type", project["type"])
     table.add_row("Version", project["version"])
     table.add_row("Modules", ", ".join(project["modules"]))
-    table.add_row("Output", info["output_path"])
+    table.add_row("Output directory", plan["output_path"])
 
     console.print(
         Panel(
             table,
-            title="[bold]Projet résolu[/bold]",
+            title="[bold]Resolved project[/bold]",
             border_style="green",
         )
     )
@@ -62,13 +80,13 @@ def render_project_info(info: dict) -> None:
 
 def render_files(files: list[dict]) -> None:
     table = Table(
-        title="Fichiers planifiés",
+        title="Planned files",
         box=box.ROUNDED,
         show_lines=False,
     )
 
     table.add_column("Action", style="bold")
-    table.add_column("Opération")
+    table.add_column("Operation")
     table.add_column("Module")
     table.add_column("Destination")
 
@@ -92,44 +110,58 @@ def render_files(files: list[dict]) -> None:
     console.print(table)
 
 
-def render_docker_and_env(info: dict) -> None:
-    tree = Tree("[bold]Configuration générée[/bold]")
+def render_configuration(plan: dict) -> None:
+    tree = Tree("[bold]Generated configuration[/bold]")
 
     docker_node = tree.add("[cyan]Docker services[/cyan]")
-    for service in info["docker_services"]:
+    for service in plan["docker_services"]:
         docker_node.add(service)
 
-    env_node = tree.add("[magenta]Variables d'environnement[/magenta]")
-    for variable in info["env_variables"]:
+    env_node = tree.add("[magenta]Environment variables[/magenta]")
+    for variable in plan["env_variables"]:
         env_node.add(variable)
 
     console.print(tree)
 
 
+def render_overwrite_warning(summary: dict) -> None:
+    files_to_overwrite = summary.get("files_to_overwrite", 0)
+
+    if files_to_overwrite > 0:
+        console.print(
+            f"[yellow]Warning:[/yellow] "
+            f"{files_to_overwrite} file(s) will be overwritten."
+        )
+
+
 @app.command()
 def dry_run(
-    manifest_path: Path,
+    manifest_path: Path = typer.Argument(
+        ...,
+        help="Path to the project manifest file.",
+    ),
+    output_path: Path = typer.Argument(
+        ...,
+        help="Directory where the project would be generated.",
+    ),
     info: bool = typer.Option(
         False,
         "--info",
-        help="Affiche les détails complets du plan.",
+        help="Show detailed generation plan.",
     ),
     json_output: bool = typer.Option(
         False,
         "--json",
-        help="Affiche le plan complet au format JSON.",
+        help="Print the complete generation plan as JSON.",
     ),
 ) -> None:
-    registry = ModuleRegistry("templates")
+    """
+    Preview the files and configuration that would be generated.
+    """
     manifest = load_project_manifest_from_yaml(str(manifest_path))
+    generator = build_generator()
 
-    generator = ProjectGenerator(registry)
-
-    plan = generator.plan(
-        manifest,
-        "C:/Users/esteb/Documents/developpement/test_projet_generation",
-    )
-
+    plan = generator.plan(manifest, output_path)
     plan_dict = plan.to_dict()
 
     if json_output:
@@ -138,16 +170,54 @@ def dry_run(
 
     render_project_info(plan_dict)
     render_summary(plan.summary)
-
-    if plan.summary["files_to_overwrite"] > 0:
-        console.print(
-            f"[yellow]Warning:[/yellow] "
-            f"{plan.summary['files_to_overwrite']} fichier(s) seront écrasés."
-        )
+    render_overwrite_warning(plan.summary)
 
     if info:
-        render_docker_and_env(plan_dict)
+        render_configuration(plan_dict)
         render_files(plan_dict["files"])
+
+
+@app.command()
+def generate(
+    manifest_path: Path = typer.Argument(
+        ...,
+        help="Path to the project manifest file.",
+    ),
+    output_path: Path = typer.Argument(
+        ...,
+        help="Directory where the project will be generated.",
+    ),
+    info: bool = typer.Option(
+        False,
+        "--info",
+        help="Show the generation plan before writing files.",
+    ),
+    clean: bool = typer.Option(
+        False,
+        "--clean",
+        help="Clean the output directory before generating the project.",
+    ),
+) -> None:
+    """
+    Generate a project from a Boilr manifest.
+    """
+    manifest = load_project_manifest_from_yaml(str(manifest_path))
+    generator = build_generator()
+
+    plan = generator.plan(manifest, output_path)
+    plan_dict = plan.to_dict()
+
+    if info:
+        render_project_info(plan_dict)
+        render_summary(plan.summary)
+        render_overwrite_warning(plan.summary)
+
+    generator.execute(plan, clean=clean)
+
+    console.print(
+        f"[green]Project generated successfully in:[/green] {output_path}"
+    )
+
 
 if __name__ == "__main__":
     app()
