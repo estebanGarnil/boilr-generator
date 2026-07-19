@@ -14,7 +14,11 @@ authors = [
 license = { text = "MIT" }
 
 dependencies = [
-    "typer>=0.12.0"
+    "typer>=0.12.0",
+    "pydantic",
+    "PyYAML",
+    "Jinja2",
+    "rich"
 ]
 
 [project.scripts]
