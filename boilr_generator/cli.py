@@ -21,7 +21,10 @@ app = typer.Typer(
 
 console = Console()
 
-TEMPLATES_DIR = Path("templates")
+PACKAGE_ROOT = Path(__file__).resolve().parent
+BUILTIN_MODULES_PATH = PACKAGE_ROOT / "templates"
+
+TEMPLATES_DIR = BUILTIN_MODULES_PATH
 
 
 def build_generator() -> ProjectGenerator:

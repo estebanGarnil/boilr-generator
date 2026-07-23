@@ -9,7 +9,9 @@ from boilr_generator.resolver import Resolver
 
 @pytest.fixture
 def templates_path() -> Path:
-    return Path("packages/boilr-generator/templates")
+    BASE_DIR = Path(__file__).resolve().parent
+    template_path = BASE_DIR / "boilr_generator" / "templates"
+    return template_path
 
 
 @pytest.fixture
