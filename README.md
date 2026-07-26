@@ -67,6 +67,31 @@ The long-term goal is to allow developers to assemble projects from reusable mod
 
 Rather than maintaining hundreds of project templates, contributors can build reusable modules that work together across the ecosystem.
 
+## Philosophy
+
+Boilr is intentionally interface-agnostic.
+
+The project manifest is the contract between the user interface and the generator core.
+
+The manifest may be produced by:
+- a CLI
+- a web interface
+- a backend API
+- automation tools
+
+Boilr only focuses on validation, resolution and generation.
+You can build your own CLI, web app, SaaS interface, or internal automation tool on top of Boilr.
+
+```
+CLI / Web UI / API / Automation
+                ↓
+            manifest
+                ↓
+       Boilr Generator Core
+                ↓
+       Generated Application
+```
+
 
 ## Why I Started Boilr
 
@@ -85,7 +110,7 @@ instead of maintaining reusable projects, maintain reusable modules that can be 
 ## Architecture
 
 ```text
-project.yml / API JSON
+project.yml
         ↓
 ProjectManifest
         ↓
