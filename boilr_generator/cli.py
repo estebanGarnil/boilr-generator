@@ -11,6 +11,7 @@ from rich.tree import Tree
 from boilr_generator.generation import ProjectGenerator
 from boilr_generator.manifest import load_project_manifest_from_yaml
 from boilr_generator.modules.registry import ModuleRegistry
+from boilr_generator.paths import get_builtin_modules_path
 
 
 app = typer.Typer(
@@ -21,14 +22,8 @@ app = typer.Typer(
 
 console = Console()
 
-PACKAGE_ROOT = Path(__file__).resolve().parent
-BUILTIN_MODULES_PATH = PACKAGE_ROOT / "templates"
-
-TEMPLATES_DIR = BUILTIN_MODULES_PATH
-
-
 def build_generator() -> ProjectGenerator:
-    registry = ModuleRegistry(str(TEMPLATES_DIR))
+    registry = ModuleRegistry(get_builtin_modules_path())
     return ProjectGenerator(registry)
 
 

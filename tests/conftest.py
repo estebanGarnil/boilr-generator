@@ -5,13 +5,12 @@ import pytest
 from boilr_generator.manifest import load_project_manifest_from_dict
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.resolver import Resolver
+from boilr_generator.paths import get_builtin_modules_path
 
 
 @pytest.fixture
 def templates_path() -> Path:
-    BASE_DIR = Path(__file__).resolve().parent
-    template_path = BASE_DIR / "boilr_generator" / "templates"
-    return template_path
+    return get_builtin_modules_path()
 
 
 @pytest.fixture
