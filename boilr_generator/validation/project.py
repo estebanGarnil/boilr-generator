@@ -1,13 +1,10 @@
-"""Project validation service."""
+﻿"""Project validation service."""
 
+from collections.abc import Iterable
 from typing import Any
 
-from boilr_generator.core.exceptions import (
-    ModuleCompatibilityError,
-    ModuleRequirementError,
-    ModuleVariableError,
-)
-from boilr_generator.core.validation import ValidationResult
+from boilr_generator.diagnostics import ValidationResult
+from boilr_generator.exceptions import ResolutionError
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.modules.schemas import ModuleManifest
@@ -30,14 +27,14 @@ def validate_project(
 
     _validate_existing_modules(manifest, registry, result)
 
-    if not result.valid:
+    if not result.is_valid:
         return result
 
     _validate_module_inputs(manifest, registry, result)
     _validate_requirements(manifest, registry, result)
     _validate_unique_roles(manifest, registry, result)
 
-    if not result.valid:
+    if not result.is_valid:
         return result
 
     _validate_resolution(manifest, registry, result)
@@ -58,7 +55,14 @@ def _validate_existing_modules(
         result.add_error(
             code="module_not_found",
             message=f"Module not found: {project_module.key}.",
-            module=project_module.key,
+            module_key=project_module.key,
+            field_path=f"modules.{project_module.key}",
+            context={
+                "requested_module": project_module.key,
+            },
+            suggestion=(
+                "Check the module key or install a module providing this key."
+            ),
         )
 
 
@@ -131,20 +135,31 @@ def _validate_required_variables(
                 f"Variable {variable_name} is required "
                 f"for module {project_module_key}."
             ),
-            module=project_module_key,
-            field=variable_name,
+            module_key=project_module_key,
+            field_path=(
+                f"modules.{project_module_key}.variables.{variable_name}"
+            ),
+            context={
+                "variable": variable_name,
+                "required": True,
+            },
+            suggestion=(
+                f"Provide a value for variable {variable_name} "
+                f"in module {project_module_key}."
+            ),
         )
 
 
 def _validate_unknown_fields(
     project_module_key: str,
     provided_fields: dict[str, Any],
-    declared_fields,
+    declared_fields: Iterable[str],
     field_kind: str,
     result: ValidationResult,
 ) -> None:
     """Validate that provided fields are declared by the module."""
     declared_field_set = set(declared_fields)
+    section = _field_section(field_kind)
 
     for field_name in provided_fields:
         if field_name in declared_field_set:
@@ -156,8 +171,18 @@ def _validate_unknown_fields(
                 f"{field_kind.capitalize()} {field_name} is not declared "
                 f"for module {project_module_key}."
             ),
-            module=project_module_key,
-            field=field_name,
+            module_key=project_module_key,
+            field_path=(
+                f"modules.{project_module_key}.{section}.{field_name}"
+            ),
+            context={
+                "field": field_name,
+                "field_kind": field_kind,
+                "declared_fields": sorted(declared_field_set),
+            },
+            suggestion=(
+                f"Remove {field_name} or declare it in the module manifest."
+            ),
         )
 
 
@@ -169,6 +194,8 @@ def _validate_field_types(
     result: ValidationResult,
 ) -> None:
     """Validate provided field types."""
+    section = _field_section(field_kind)
+
     for field_name, value in provided_fields.items():
         definition = definitions.get(field_name)
 
@@ -177,7 +204,7 @@ def _validate_field_types(
 
         expected_type = TYPE_MAPPING[definition.type]
 
-        if isinstance(value, expected_type):
+        if _matches_expected_type(value, expected_type):
             continue
 
         result.add_error(
@@ -186,8 +213,20 @@ def _validate_field_types(
                 f"{field_kind.capitalize()} {field_name} for module "
                 f"{project_module_key} must be of type {definition.type}."
             ),
-            module=project_module_key,
-            field=field_name,
+            module_key=project_module_key,
+            field_path=(
+                f"modules.{project_module_key}.{section}.{field_name}"
+            ),
+            context={
+                "field": field_name,
+                "field_kind": field_kind,
+                "expected_type": definition.type,
+                "actual_type": type(value).__name__,
+            },
+            suggestion=(
+                f"Provide a value of type {definition.type} "
+                f"for {field_name}."
+            ),
         )
 
 
@@ -215,8 +254,19 @@ def _validate_requirements(
                     f"Module {module.meta.key} requires "
                     f"a module of type {requirement.type}."
                 ),
-                module=module.meta.key,
-                field=requirement.type,
+                module_key=module.meta.key,
+                field_path=(
+                    f"modules.{module.meta.key}."
+                    f"requirements.{requirement.type}"
+                ),
+                context={
+                    "required_type": requirement.type,
+                    "selected_types": sorted(selected_types),
+                },
+                suggestion=(
+                    f"Add a module of type {requirement.type} "
+                    f"to the project manifest."
+                ),
             )
 
 
@@ -249,8 +299,16 @@ def _validate_unique_roles(
                 f"Modules {seen_groups[group]} and {module.meta.key} "
                 f"cannot both be used because role {group} is unique."
             ),
-            module=module.meta.key,
-            field=group,
+            module_key=module.meta.key,
+            field_path=f"modules.{module.meta.key}.role.{group}",
+            context={
+                "role": group,
+                "first_module": seen_groups[group],
+                "conflicting_module": module.meta.key,
+            },
+            suggestion=(
+                f"Keep only one module using the unique role {group}."
+            ),
         )
 
 
@@ -262,18 +320,28 @@ def _validate_resolution(
     """Validate resolver rules."""
     try:
         Resolver(registry).resolve(manifest)
-    except ModuleRequirementError as error:
+    except ResolutionError as error:
         result.add_error(
-            code="missing_requirement",
+            code=getattr(error, "code", "resolution_error"),
             message=str(error),
+            module_key=getattr(error, "module_key", None),
+            field_path=getattr(error, "field_path", None),
+            context=getattr(error, "context", {}),
+            suggestion=getattr(error, "suggestion", None),
         )
-    except ModuleCompatibilityError as error:
-        result.add_error(
-            code="module_incompatibility",
-            message=str(error),
-        )
-    except ModuleVariableError as error:
-        result.add_error(
-            code="module_variable_error",
-            message=str(error),
-        )
+
+
+def _field_section(field_kind: str) -> str:
+    """Return the manifest section associated with a field kind."""
+    if field_kind == "variable":
+        return "variables"
+
+    return "options"
+
+
+def _matches_expected_type(value: Any, expected_type: type) -> bool:
+    """Check a value type without accepting booleans as integers."""
+    if expected_type is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    return isinstance(value, expected_type)
