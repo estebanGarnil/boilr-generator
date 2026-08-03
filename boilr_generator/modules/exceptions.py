@@ -1,10 +1,21 @@
-class ModuleError(Exception):
-    """Base exception for module-related errors."""
+"""Module exception compatibility exports."""
 
+from boilr_generator.exceptions import (
+    DuplicateModuleError,
+    ModuleError,
+    ModuleLoadError,
+    ModuleNotFoundError,
+    ModuleSchemaError,
+)
 
-class ModuleLoadError(ModuleError):
-    """Raised when a module cannot be loaded."""
+# Legacy alias.
+ModuleValidationError = ModuleSchemaError
 
-
-class ModuleValidationError(ModuleError):
-    """Raised when a module manifest is invalid."""
+__all__ = [
+    "DuplicateModuleError",
+    "ModuleError",
+    "ModuleLoadError",
+    "ModuleNotFoundError",
+    "ModuleSchemaError",
+    "ModuleValidationError",
+]
