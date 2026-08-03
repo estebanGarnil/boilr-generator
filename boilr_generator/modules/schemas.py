@@ -2,7 +2,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
-from boilr_generator.core.exceptions import ModuleVariableError
 
 # --- META / ROLE ---
 
@@ -71,7 +70,7 @@ class VariableDefinition(BaseModel):
     @model_validator(mode="after")
     def validate_type(self) -> "VariableDefinition":
         if self.type not in ALLOWED_TYPES:
-            raise ModuleVariableError(f"Invalid variable type: {self.type}")
+            raise ValueError(f"Invalid variable type: {self.type}")
         return self
 
 
@@ -95,7 +94,7 @@ class OptionDefinition(BaseModel):
     @model_validator(mode="after")
     def validate_type(self) -> "OptionDefinition":
         if self.type not in ALLOWED_TYPES:
-            raise ModuleVariableError(f"Invalid option type: {self.type}")
+            raise ValueError(f"Invalid option type: {self.type}")
         return self
 
 
@@ -184,7 +183,7 @@ class ModuleManifest(BaseModel):
     def validate_keys(self) -> "ModuleManifest":
         # Cohérence simple
         if self.meta.key != self.meta.key.lower():
-            raise ModuleVariableError("Module key must be lowercase.")
+            raise ValueError("Module key must be lowercase.")
         return self
 
     # --- helpers utiles ---
