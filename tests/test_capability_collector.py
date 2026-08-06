@@ -75,7 +75,7 @@ def test_collector_collects_and_renders_capability_contracts(
     assert requirements[0].unique is True
 
 
-def test_resolver_stores_collected_capability_contracts(
+def test_resolver_stores_capability_contracts_and_bindings(
     registry,
     manifest,
     resolved_project,
@@ -100,7 +100,19 @@ def test_resolver_stores_collected_capability_contracts(
     assert len(result.requirements) == 1
     assert result.requirements[0].module_key == "django"
 
-    assert result.bindings == []
+    assert len(result.bindings) == 1
+
+    binding = result.bindings[0]
+
+    assert binding.binding_key == "primary_database"
+    assert binding.capability == "database.connection"
+    assert binding.consumer_module_key == "django"
+    assert binding.provider_module_key == "postgres"
+    assert binding.values == {
+        "database": "my_app",
+        "user": "my_app",
+        "port": 5432,
+    }
 
 
 def test_collector_reports_provider_template_errors(
