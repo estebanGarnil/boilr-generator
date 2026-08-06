@@ -21,6 +21,7 @@ class CapabilityRequirement(BaseModel):
     capability: str = Field(min_length=1)
     optional: bool = False
     unique: bool = True
+    contract: dict[str, str] = Field(default_factory=dict)
 
 
 class CapabilityBinding(BaseModel):

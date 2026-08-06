@@ -71,6 +71,7 @@ class CapabilityCollector:
                         capability=requirement.capability,
                         optional=requirement.optional,
                         unique=requirement.unique,
+                        contract=dict(requirement.contract),
                     )
                 )
 

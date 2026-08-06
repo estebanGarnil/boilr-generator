@@ -60,6 +60,8 @@ class ModuleCompatibility(BaseModel):
             return True  # pas de contrainte
         return other_key in self.matrix[other_type]
 
+ALLOWED_TYPES = {"string", "int", "boolean", "list"}
+
 # --- CAPABILITIES ---
 
 
@@ -82,11 +84,24 @@ class RequiredCapability(BaseModel):
     )
     optional: bool = False
     unique: bool = True
+    contract: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_contract_types(self) -> "RequiredCapability":
+        """Validate the declared capability value types."""
+        invalid_types = sorted(
+            set(self.contract.values()) - ALLOWED_TYPES
+        )
+
+        if invalid_types:
+            raise ValueError(
+                "Invalid capability contract types: "
+                f"{', '.join(invalid_types)}"
+            )
+
+        return self
 
 # --- VARIABLES / OPTIONS ---
-
-ALLOWED_TYPES = {"string", "int", "boolean", "list"}
-
 
 class VariableDefinition(BaseModel):
     type: str

@@ -5,6 +5,7 @@ from boilr_generator.core import (
 )
 from boilr_generator.exceptions import (
     AmbiguousProviderError,
+    BindingError,
     MissingCapabilityError,
 )
 from boilr_generator.resolver import Resolver
@@ -30,6 +31,7 @@ def make_requirement(
     *,
     optional=False,
     unique=True,
+    contract=None,
 ):
     return CapabilityRequirement(
         module_key="django",
@@ -37,6 +39,7 @@ def make_requirement(
         capability="database.connection",
         optional=optional,
         unique=unique,
+        contract=contract or {},
     )
 
 
@@ -227,3 +230,91 @@ def test_builtin_django_uses_postgres_binding(
     assert duplicated_variables.isdisjoint(
         django.variables
     )
+
+    assert resolved_project.requirements[0].contract == {
+        "engine": "string",
+        "host": "string",
+        "port": "int",
+        "name": "string",
+        "user": "string",
+        "password": "string",
+        "service": "string",
+    }
+
+def test_binder_rejects_missing_contract_field():
+    provider = make_provider("postgres")
+    del provider.values["port"]
+
+    requirement = make_requirement(
+        contract={
+            "host": "string",
+            "port": "int",
+        }
+    )
+
+    with pytest.raises(BindingError) as error_info:
+        CapabilityBinder().bind([provider], [requirement])
+
+    error = error_info.value
+
+    assert error.code == "binding_error"
+    assert error.module_key == "django"
+    assert error.field_path == (
+        "modules.django.requires.primary_database.contract.port"
+    )
+    assert error.context["reason"] == "missing_field"
+    assert error.context["provider_module"] == "postgres"
+    assert error.context["field"] == "port"
+    assert error.context["expected_type"] == "int"
+
+
+def test_binder_rejects_invalid_contract_field_type():
+    provider = make_provider("postgres")
+    provider.values["port"] = "5432"
+
+    requirement = make_requirement(
+        contract={"port": "int"}
+    )
+
+    with pytest.raises(BindingError) as error_info:
+        CapabilityBinder().bind([provider], [requirement])
+
+    error = error_info.value
+
+    assert error.context["reason"] == "invalid_type"
+    assert error.context["expected_type"] == "int"
+    assert error.context["actual_type"] == "str"
+
+
+def test_binder_rejects_boolean_for_integer_contract_field():
+    provider = make_provider("postgres")
+    provider.values["port"] = True
+
+    requirement = make_requirement(
+        contract={"port": "int"}
+    )
+
+    with pytest.raises(BindingError) as error_info:
+        CapabilityBinder().bind([provider], [requirement])
+
+    assert error_info.value.context["actual_type"] == "bool"
+
+
+def test_binder_accepts_additional_provider_fields():
+    provider = make_provider("postgres")
+    provider.values["engine"] = "postgresql"
+
+    requirement = make_requirement(
+        contract={"host": "string"}
+    )
+
+    bindings = CapabilityBinder().bind(
+        [provider],
+        [requirement],
+    )
+
+    assert bindings[0].values == {
+        "host": "db",
+        "port": 5432,
+        "engine": "postgresql",
+    }

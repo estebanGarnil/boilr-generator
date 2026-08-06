@@ -35,6 +35,11 @@ def configure_capability_contracts(project):
                 "binding": "primary_database",
                 "optional": False,
                 "unique": True,
+                "contract": {
+                    "database": "string",
+                    "user": "string",
+                    "port": "int",
+                },
             }
         )
     ]
@@ -57,7 +62,9 @@ def test_collector_collects_and_renders_capability_contracts(
 
     assert len(providers) == 1
     assert providers[0].module_key == "postgres"
-    assert providers[0].capability == "database.connection"
+    assert providers[0].capability == (
+        "database.connection"
+    )
     assert providers[0].values == {
         "database": "my_app",
         "user": "my_app",
@@ -67,12 +74,19 @@ def test_collector_collects_and_renders_capability_contracts(
 
     assert len(requirements) == 1
     assert requirements[0].module_key == "django"
-    assert requirements[0].binding_key == "primary_database"
+    assert requirements[0].binding_key == (
+        "primary_database"
+    )
     assert requirements[0].capability == (
         "database.connection"
     )
     assert requirements[0].optional is False
     assert requirements[0].unique is True
+    assert requirements[0].contract == {
+        "database": "string",
+        "user": "string",
+        "port": "int",
+    }
 
 
 def test_resolver_stores_capability_contracts_and_bindings(
@@ -99,6 +113,11 @@ def test_resolver_stores_capability_contracts_and_bindings(
 
     assert len(result.requirements) == 1
     assert result.requirements[0].module_key == "django"
+    assert result.requirements[0].contract == {
+        "database": "string",
+        "user": "string",
+        "port": "int",
+    }
 
     assert len(result.bindings) == 1
 
@@ -132,7 +151,9 @@ def test_collector_reports_provider_template_errors(
         )
     ]
 
-    with pytest.raises(TemplateRenderError) as error_info:
+    with pytest.raises(
+        TemplateRenderError
+    ) as error_info:
         CapabilityCollector().collect_providers(
             project.modules
         )

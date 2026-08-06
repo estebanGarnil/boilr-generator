@@ -135,3 +135,21 @@ def test_module_manifest_rejects_duplicate_binding_keys(
         match="Duplicate capability binding keys",
     ):
         ModuleManifest.model_validate(data)
+
+def test_module_manifest_rejects_invalid_contract_types(
+    resolved_project,
+):
+    data = get_module_manifest_data(
+        resolved_project,
+        "django",
+    )
+
+    data["requires"][0]["contract"] = {
+        "host": "unknown",
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="Invalid capability contract types",
+    ):
+        ModuleManifest.model_validate(data)

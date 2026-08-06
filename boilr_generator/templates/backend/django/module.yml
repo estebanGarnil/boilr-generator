@@ -53,10 +53,19 @@ compatibility:
     - nginx
 
 requires:
+requires:
   - capability: database.connection
     binding: primary_database
     optional: false
     unique: true
+    contract:
+      engine: string
+      host: string
+      port: int
+      name: string
+      user: string
+      password: string
+      service: string
 
 variables:
   project_name:
