@@ -10,6 +10,9 @@ from boilr_generator.exceptions import (
     EnvironmentConflictError,
     TemplateRenderError,
 )
+from boilr_generator.generation.context import (
+    build_module_context,
+)
 
 JINJA_ENVIRONMENT = Environment(
     autoescape=False,
@@ -34,11 +37,16 @@ class EnvGenerator:
             if exports is None or exports.env is None:
                 continue
 
+            context = build_module_context(
+                project,
+                module,
+            )
+
             for key, value in exports.env.root.items():
                 field_path = f"modules.{module.key}.exports.env.{key}"
                 rendered_value = self._render_value(
                     value,
-                    module.variables,
+                    context,
                     module_key=module.key,
                     field_path=field_path,
                 )

@@ -1,5 +1,8 @@
 """Resolved project domain model."""
 
+from copy import deepcopy
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from boilr_generator.core.capabilities import (
@@ -108,3 +111,44 @@ class ResolvedProject(BaseModel):
             for binding in self.bindings
             if binding.provider_module_key == module_key
         ]
+
+    def binding_context_for(
+        self,
+        module_key: str,
+    ) -> dict[str, Any]:
+        """Build the Jinja binding context for one consumer."""
+        context: dict[str, Any] = {}
+
+        module_requirements = [
+            requirement
+            for requirement in self.requirements
+            if requirement.module_key == module_key
+        ]
+
+        for requirement in module_requirements:
+            matching_bindings = [
+                binding
+                for binding in self.bindings
+                if (
+                    binding.consumer_module_key == module_key
+                    and binding.binding_key
+                    == requirement.binding_key
+                    and binding.capability
+                    == requirement.capability
+                )
+            ]
+
+            if not matching_bindings:
+                continue
+
+            if requirement.unique:
+                context[requirement.binding_key] = deepcopy(
+                    matching_bindings[0].values
+                )
+            else:
+                context[requirement.binding_key] = [
+                    deepcopy(binding.values)
+                    for binding in matching_bindings
+                ]
+
+        return context

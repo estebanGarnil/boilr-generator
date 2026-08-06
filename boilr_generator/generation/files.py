@@ -12,6 +12,9 @@ from boilr_generator.exceptions import (
     SourceNotFoundError,
     TemplateRenderError,
 )
+from boilr_generator.generation.context import (
+    build_module_context,
+)
 
 JINJA_ENVIRONMENT = Environment(
     autoescape=False,
@@ -105,6 +108,10 @@ class FileGenerator:
         output_path = Path(output_path)
 
         for module in project.ordered_modules():
+            context = build_module_context(
+                project,
+                module,
+            )
             for index, source in enumerate(
                 module.manifest.sources.render
             ):
@@ -117,18 +124,11 @@ class FileGenerator:
                 self._render_template(
                     template_path=template_path,
                     destination_path=destination_path,
-                    context={
-                        **module.variables,
-                        "options": module.options,
-                        "dependencies": getattr(
-                            module.manifest,
-                            "dependencies",
-                            {},
-                        ),
-                    },
+                    context=context,
                     module_key=module.key,
                     field_path=field_path,
                 )
+
 
     def _render_template(
         self,

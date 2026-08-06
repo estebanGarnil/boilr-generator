@@ -10,6 +10,9 @@ from boilr_generator.exceptions import (
     DockerConflictError,
     TemplateRenderError,
 )
+from boilr_generator.generation.context import (
+    build_module_context,
+)
 
 JINJA_ENVIRONMENT = Environment(
     autoescape=False,
@@ -40,13 +43,18 @@ class DockerComposeGenerator:
             if docker is None:
                 continue
 
+            context = build_module_context(
+                project,
+                module,
+            )
+
             for service_name, service in docker.services.items():
                 field_path = (
                     f"modules.{module.key}.docker.services.{service_name}"
                 )
                 rendered_service = self._render_value(
                     service.root,
-                    module.variables,
+                    context,
                     module_key=module.key,
                     field_path=field_path,
                 )
