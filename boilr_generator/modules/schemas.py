@@ -1,7 +1,6 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
-
 
 # --- META / ROLE ---
 
@@ -10,8 +9,8 @@ class ModuleMeta(BaseModel):
     key: str
     type: str  # backend, frontend, database, proxy, etc.
     version: str
-    description: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class ModuleRole(BaseModel):
@@ -27,34 +26,62 @@ class RequirementItem(BaseModel):
 
 
 class ModuleRequirements(BaseModel):
-    mandatory: List[RequirementItem] = Field(default_factory=list)
-    optional: List[RequirementItem] = Field(default_factory=list)
+    mandatory: list[RequirementItem] = Field(default_factory=list)
+    optional: list[RequirementItem] = Field(default_factory=list)
 
-    def mandatory_types(self) -> List[str]:
+    def mandatory_types(self) -> list[str]:
         return [r.type for r in self.mandatory]
 
-    def optional_types(self) -> List[str]:
+    def optional_types(self) -> list[str]:
         return [r.type for r in self.optional]
 
 
 # --- COMPATIBILITY ---
 
 class ModuleCompatibility(BaseModel):
-    matrix: Dict[str, List[str]] = Field(default_factory=dict)
+    matrix: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     def normalize(cls, data: Any) -> Any:
-        # Permet d'accepter directement le dict du YAML
-        # et le ranger dans "matrix"
-        if isinstance(data, dict):
-            return {"matrix": data}
-        return data
+        """Accept compact YAML and serialized matrix formats."""
+        if not isinstance(data, dict):
+            return data
+
+        if (
+            set(data) == {"matrix"}
+            and isinstance(data["matrix"], dict)
+        ):
+            return data
+
+        return {"matrix": data}
 
     def is_compatible(self, other_type: str, other_key: str) -> bool:
         if other_type not in self.matrix:
             return True  # pas de contrainte
         return other_key in self.matrix[other_type]
 
+# --- CAPABILITIES ---
+
+
+class ProvidedCapability(BaseModel):
+    """Capability exposed by a module."""
+
+    capability: str = Field(min_length=1)
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class RequiredCapability(BaseModel):
+    """Capability consumed by a module."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    capability: str = Field(min_length=1)
+    binding_key: str = Field(
+        alias="binding",
+        min_length=1,
+    )
+    optional: bool = False
+    unique: bool = True
 
 # --- VARIABLES / OPTIONS ---
 
@@ -65,7 +92,7 @@ class VariableDefinition(BaseModel):
     type: str
     required: bool = False
     default: Any = None
-    description: Optional[str] = None
+    description: str | None = None
 
     @model_validator(mode="after")
     def validate_type(self) -> "VariableDefinition":
@@ -89,7 +116,7 @@ class ModuleVariables(RootModel[dict[str, VariableDefinition]]):
 class OptionDefinition(BaseModel):
     type: str
     default: Any = None
-    description: Optional[str] = None
+    description: str | None = None
 
     @model_validator(mode="after")
     def validate_type(self) -> "OptionDefinition":
@@ -144,7 +171,7 @@ class DockerService(RootModel[dict[str, Any]]):
 
 
 class DockerConfig(BaseModel):
-    services: Dict[str, DockerService] = Field(default_factory=dict)
+    services: dict[str, DockerService] = Field(default_factory=dict)
     volumes: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -153,14 +180,14 @@ class ExportEnv(RootModel[dict[str, str]]):
 
 
 class ModuleExports(BaseModel):
-    env: Optional[ExportEnv] = None
+    env: ExportEnv | None = None
 
 
 # --- DOCS ---
 
 class ModuleDocs(BaseModel):
-    summary: Optional[str] = None
-    notes: List[str] = Field(default_factory=list)
+    summary: str | None = None
+    notes: list[str] = Field(default_factory=list)
 
 
 # --- ROOT MODEL ---
@@ -171,19 +198,48 @@ class ModuleManifest(BaseModel):
     requirements: ModuleRequirements = Field(default_factory=ModuleRequirements)
     dependencies: dict[str, list[str]] = Field(default_factory=dict)
     compatibility: ModuleCompatibility = Field(default_factory=ModuleCompatibility)
+    provides: list[ProvidedCapability] = Field(
+        default_factory=list
+    )
+    requires: list[RequiredCapability] = Field(
+        default_factory=list
+    )
     variables: ModuleVariables = Field(default_factory=lambda: ModuleVariables({}))
     options: ModuleOptions = Field(default_factory=lambda: ModuleOptions({}))    
     assembly: AssemblyConfig
     sources: ModuleSources = Field(default_factory=ModuleSources)
-    docker: Optional[DockerConfig] = None
-    exports: Optional[ModuleExports] = None
-    docs: Optional[ModuleDocs] = None
+    docker: DockerConfig | None = None
+    exports: ModuleExports | None = None
+    docs: ModuleDocs | None = None
 
     @model_validator(mode="after")
     def validate_keys(self) -> "ModuleManifest":
-        # Cohérence simple
+        """Validate unique and normalized module contract keys."""
         if self.meta.key != self.meta.key.lower():
             raise ValueError("Module key must be lowercase.")
+
+        provided_capabilities = [
+            provider.capability
+            for provider in self.provides
+        ]
+
+        if len(provided_capabilities) != len(
+            set(provided_capabilities)
+        ):
+            raise ValueError(
+                "Duplicate provided capabilities are not allowed."
+            )
+
+        binding_keys = [
+            requirement.binding_key
+            for requirement in self.requires
+        ]
+
+        if len(binding_keys) != len(set(binding_keys)):
+            raise ValueError(
+                "Duplicate capability binding keys are not allowed."
+            )
+
         return self
 
     # --- helpers utiles ---
