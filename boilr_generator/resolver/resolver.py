@@ -4,6 +4,7 @@ from boilr_generator.core import ResolvedModule
 from boilr_generator.core.project import ResolvedProject
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
+from boilr_generator.resolver.capabilities import CapabilityCollector
 from boilr_generator.resolver.merger import ProjectMerger
 from boilr_generator.resolver.validator import ProjectValidator
 
@@ -15,6 +16,7 @@ class Resolver:
         self.registry = registry
         self.validator = ProjectValidator()
         self.merger = ProjectMerger()
+        self.capability_collector = CapabilityCollector()
 
     def resolve(self, manifest: ProjectManifest) -> ResolvedProject:
         """Resolve and validate all modules selected by a manifest."""
@@ -25,9 +27,20 @@ class Resolver:
         self.validator.validate_variables(resolved_modules)
         self.validator.validate_variable_types(resolved_modules)
 
+        providers = self.capability_collector.collect_providers(
+            resolved_modules
+        )
+        requirements = (
+            self.capability_collector.collect_requirements(
+                resolved_modules
+            )
+        )
+
         return ResolvedProject(
             project=manifest.project,
             modules=resolved_modules,
+            providers=providers,
+            requirements=requirements,
         )
 
     def _resolve_modules(
