@@ -1,11 +1,10 @@
 from pathlib import Path
 
 import pytest
-
 from boilr_generator.manifest import load_project_manifest_from_dict
 from boilr_generator.modules.registry import ModuleRegistry
-from boilr_generator.resolver import Resolver
 from boilr_generator.paths import get_builtin_modules_path
+from boilr_generator.resolver import Resolver
 
 
 @pytest.fixture
@@ -45,12 +44,6 @@ def valid_manifest_data() -> dict:
                     "allowed_hosts": ["localhost", "127.0.0.1"],
                     "backend_port": 8000,
                     "debug": True,
-                    "db_engine": "postgresql",
-                    "db_host": "db",
-                    "db_port": 5432,
-                    "db_name": "my_app",
-                    "db_user": "my_app",
-                    "db_password": "password",
                 },
                 "options": {
                     "rest_framework": True,

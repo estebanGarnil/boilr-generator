@@ -37,23 +37,29 @@ def test_docker_generator_contains_volumes(resolved_project):
 def test_docker_generator_accepts_identical_service_definitions(
     resolved_project,
 ):
-    project = resolved_project.model_copy(deep=True)
-    postgres = project.get_module("postgres")
-    django = project.get_module("django")
+    generator = DockerComposeGenerator()
 
-    assert postgres is not None
-    assert django is not None
-    assert postgres.manifest.docker is not None
-    assert django.manifest.docker is not None
-
-    postgres_service = postgres.manifest.docker.services["db"]
-    django.manifest.docker.services["db"] = postgres_service.model_copy(
-        deep=True
+    baseline_compose = generator.generate(
+        resolved_project
     )
 
-    compose = DockerComposeGenerator().generate(project)
+    project = resolved_project.model_copy(deep=True)
+    django = project.get_module("django")
 
-    assert compose["services"]["db"]["image"] == "postgres:16"
+    assert django is not None
+    assert django.manifest.docker is not None
+
+    django.manifest.docker.services["db"] = (
+        DockerService.model_validate(
+            baseline_compose["services"]["db"]
+        )
+    )
+
+    compose = generator.generate(project)
+
+    assert compose["services"]["db"] == (
+        baseline_compose["services"]["db"]
+    )
 
 
 def test_docker_generator_rejects_conflicting_services(

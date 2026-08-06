@@ -1,6 +1,7 @@
 {% for dep in dependencies.base %}
 {{ dep }}
 {% endfor %}
+{% set database = bindings.primary_database %}
 
 {% if options.rest_framework %}
 {% for dep in dependencies.rest_framework %}
@@ -14,13 +15,13 @@
 {% endfor %}
 {% endif %}
 
-{% if db_engine in ["postgres", "postgresql"] %}
+{% if database.engine in ["postgres", "postgresql"] %}
 {% for dep in dependencies.postgres %}
 {{ dep }}
 {% endfor %}
 {% endif %}
 
-{% if db_engine == "mysql" %}
+{% if database.engine == "mysql" %}
 {% for dep in dependencies.mysql %}
 {{ dep }}
 {% endfor %}

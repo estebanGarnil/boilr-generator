@@ -2,6 +2,7 @@ from boilr_generator.core import (
     CapabilityBinding,
     CapabilityProvider,
     CapabilityRequirement,
+    ResolvedProject,
 )
 
 
@@ -49,9 +50,14 @@ def test_capability_domain_models_store_resolution_data():
 def test_resolved_project_uses_empty_resolution_collections_by_default(
     resolved_project,
 ):
-    assert resolved_project.providers == []
-    assert resolved_project.requirements == []
-    assert resolved_project.bindings == []
+    project = ResolvedProject(
+        project=resolved_project.project,
+        modules=resolved_project.modules,
+    )
+
+    assert project.providers == []
+    assert project.requirements == []
+    assert project.bindings == []
 
 
 def test_resolved_project_queries_capability_relationships(

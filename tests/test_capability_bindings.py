@@ -188,3 +188,42 @@ def test_resolver_stores_created_bindings(
     assert result.bindings[0].provider_module_key == (
         "postgres"
     )
+
+def test_builtin_django_uses_postgres_binding(
+    resolved_project,
+):
+    django = resolved_project.get_module("django")
+
+    assert django is not None
+
+    assert len(resolved_project.providers) == 1
+    assert len(resolved_project.requirements) == 1
+    assert len(resolved_project.bindings) == 1
+
+    binding = resolved_project.bindings[0]
+
+    assert binding.consumer_module_key == "django"
+    assert binding.provider_module_key == "postgres"
+    assert binding.binding_key == "primary_database"
+    assert binding.values == {
+        "engine": "postgresql",
+        "host": "db",
+        "port": 5432,
+        "name": "my_app",
+        "user": "my_app",
+        "password": "password",
+        "service": "db",
+    }
+
+    duplicated_variables = {
+        "db_engine",
+        "db_host",
+        "db_port",
+        "db_name",
+        "db_user",
+        "db_password",
+    }
+
+    assert duplicated_variables.isdisjoint(
+        django.variables
+    )

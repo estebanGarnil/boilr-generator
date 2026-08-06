@@ -30,6 +30,9 @@ def configure_unique_binding(project):
             "engine": "postgresql",
             "host": "db",
             "port": 5432,
+            "name": "my_app",
+            "user": "my_app",
+            "password": "password",
             "service": "db",
         },
     )
@@ -61,6 +64,9 @@ def test_module_context_contains_unique_binding(
         "engine": "postgresql",
         "host": "db",
         "port": 5432,
+        "name": "my_app",
+        "user": "my_app",
+        "password": "password",
         "service": "db",
     }
 

@@ -55,29 +55,31 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
-{% if db_engine in ["postgres", "postgresql"] %}
+{% set database = bindings.primary_database %}
+{% if database.engine in ["postgres", "postgresql"] %}
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("DB_NAME", "{{ db_name }}"),
-        "USER": os.getenv("DB_USER", "{{ db_user }}"),
-        "PASSWORD": os.getenv("DB_PASSWORD", "{{ db_password }}"),
-        "HOST": os.getenv("DB_HOST", "{{ db_host }}"),
-        "PORT": os.getenv("DB_PORT", "{{ db_port }}"),
+        "NAME": os.getenv("DB_NAME", "{{ database.name }}"),
+        "USER": os.getenv("DB_USER", "{{ database.user }}"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "{{ database.password }}"),
+        "HOST": os.getenv("DB_HOST", "{{ database.host }}"),
+        "PORT": os.getenv("DB_PORT", "{{ database.port }}"),
     }
 }
-{% elif db_engine == "mysql" %}
+{% elif database.engine == "mysql" %}
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("DB_NAME", "{{ db_name }}"),
-        "USER": os.getenv("DB_USER", "{{ db_user }}"),
-        "PASSWORD": os.getenv("DB_PASSWORD", "{{ db_password }}"),
-        "HOST": os.getenv("DB_HOST", "{{ db_host }}"),
-        "PORT": os.getenv("DB_PORT", "{{ db_port }}"),
+        "NAME": os.getenv("DB_NAME", "{{ database.name }}"),
+        "USER": os.getenv("DB_USER", "{{ database.user }}"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "{{ database.password }}"),
+        "HOST": os.getenv("DB_HOST", "{{ database.host }}"),
+        "PORT": os.getenv("DB_PORT", "{{ database.port }}"),
     }
 }
 {% endif %}
+
 
 LANGUAGE_CODE = "fr-fr"
 TIME_ZONE = "Europe/Paris"
