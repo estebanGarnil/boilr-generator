@@ -6,6 +6,9 @@ from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.resolver.bindings import CapabilityBinder
 from boilr_generator.resolver.capabilities import CapabilityCollector
+from boilr_generator.resolver.graph import (
+    DependencyGraphBuilder,
+)
 from boilr_generator.resolver.merger import ProjectMerger
 from boilr_generator.resolver.validator import ProjectValidator
 
@@ -19,6 +22,7 @@ class Resolver:
         self.merger = ProjectMerger()
         self.capability_collector = CapabilityCollector()
         self.capability_binder = CapabilityBinder()
+        self.dependency_graph_builder = DependencyGraphBuilder()
 
     def resolve(self, manifest: ProjectManifest) -> ResolvedProject:
         """Resolve and validate all modules selected by a manifest."""
@@ -43,12 +47,18 @@ class Resolver:
             requirements,
         )
 
+        dependency_graph = self.dependency_graph_builder.build(
+            resolved_modules,
+            bindings,
+        )
+
         return ResolvedProject(
             project=manifest.project,
             modules=resolved_modules,
             providers=providers,
             requirements=requirements,
             bindings=bindings,
+            dependency_graph=dependency_graph,
         )
 
     def _resolve_modules(

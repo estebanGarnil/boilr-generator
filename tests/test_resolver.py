@@ -19,7 +19,9 @@ def test_resolver_resolves_valid_project(registry, manifest):
     assert resolved_project.has_module("django") is True
 
 
-def test_resolver_orders_modules_by_priority(resolved_project):
+def test_resolver_orders_modules_by_dependency_graph(
+    resolved_project,
+):
     ordered_keys = [
         module.key
         for module in resolved_project.ordered_modules()

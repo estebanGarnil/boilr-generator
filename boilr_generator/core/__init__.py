@@ -5,6 +5,10 @@ from boilr_generator.core.capabilities import (
     CapabilityProvider,
     CapabilityRequirement,
 )
+from boilr_generator.core.dependencies import (
+    DependencyEdge,
+    DependencyGraph,
+)
 from boilr_generator.core.module import ResolvedModule
 from boilr_generator.core.project import ResolvedProject
 
@@ -14,4 +18,6 @@ __all__ = [
     "CapabilityRequirement",
     "ResolvedModule",
     "ResolvedProject",
+    "DependencyEdge",
+    "DependencyGraph",
 ]

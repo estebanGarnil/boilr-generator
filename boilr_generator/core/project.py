@@ -10,6 +10,7 @@ from boilr_generator.core.capabilities import (
     CapabilityProvider,
     CapabilityRequirement,
 )
+from boilr_generator.core.dependencies import DependencyGraph
 from boilr_generator.core.module import ResolvedModule
 from boilr_generator.manifest.schemas import ProjectInfo
 
@@ -27,6 +28,9 @@ class ResolvedProject(BaseModel):
     )
     bindings: list[CapabilityBinding] = Field(
         default_factory=list
+    )
+    dependency_graph: DependencyGraph = Field(
+        default_factory=DependencyGraph
     )
 
     def get_module(
@@ -62,7 +66,24 @@ class ResolvedProject(BaseModel):
         ]
 
     def ordered_modules(self) -> list[ResolvedModule]:
-        """Return the legacy priority-based module order."""
+        """Return modules in resolved dependency order."""
+        ordered_keys = self.dependency_graph.ordered_module_keys
+        module_by_key = {
+            module.key: module
+            for module in self.modules
+        }
+
+        graph_contains_every_module = (
+            len(ordered_keys) == len(self.modules)
+            and set(ordered_keys) == set(module_by_key)
+        )
+
+        if graph_contains_every_module:
+            return [
+                module_by_key[module_key]
+                for module_key in ordered_keys
+            ]
+
         return sorted(
             self.modules,
             key=lambda module: module.priority,

@@ -58,7 +58,9 @@ def test_resolved_project_uses_empty_resolution_collections_by_default(
     assert project.providers == []
     assert project.requirements == []
     assert project.bindings == []
-
+    assert project.dependency_graph.nodes == []
+    assert project.dependency_graph.edges == []
+    assert project.dependency_graph.ordered_module_keys == []
 
 def test_resolved_project_queries_capability_relationships(
     resolved_project,
