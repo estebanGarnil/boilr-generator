@@ -18,47 +18,8 @@ class ModuleRole(BaseModel):
     unique: bool = False
 
 
-# --- REQUIREMENTS ---
-
-class RequirementItem(BaseModel):
-    type: str  # database, cache, proxy...
-    unique: bool = False
-
-
-class ModuleRequirements(BaseModel):
-    mandatory: list[RequirementItem] = Field(default_factory=list)
-    optional: list[RequirementItem] = Field(default_factory=list)
-
-    def mandatory_types(self) -> list[str]:
-        return [r.type for r in self.mandatory]
-
-    def optional_types(self) -> list[str]:
-        return [r.type for r in self.optional]
-
 
 # --- COMPATIBILITY ---
-
-class ModuleCompatibility(BaseModel):
-    matrix: dict[str, list[str]] = Field(default_factory=dict)
-
-    @model_validator(mode="before")
-    def normalize(cls, data: Any) -> Any:
-        """Accept compact YAML and serialized matrix formats."""
-        if not isinstance(data, dict):
-            return data
-
-        if (
-            set(data) == {"matrix"}
-            and isinstance(data["matrix"], dict)
-        ):
-            return data
-
-        return {"matrix": data}
-
-    def is_compatible(self, other_type: str, other_key: str) -> bool:
-        if other_type not in self.matrix:
-            return True  # pas de contrainte
-        return other_key in self.matrix[other_type]
 
 ALLOWED_TYPES = {"string", "int", "boolean", "list"}
 
@@ -313,9 +274,7 @@ class ModuleDocs(BaseModel):
 class ModuleManifest(BaseModel):
     meta: ModuleMeta
     role: ModuleRole
-    requirements: ModuleRequirements = Field(default_factory=ModuleRequirements)
     dependencies: dict[str, list[str]] = Field(default_factory=dict)
-    compatibility: ModuleCompatibility = Field(default_factory=ModuleCompatibility)
     provides: list[ProvidedCapability] = Field(
         default_factory=list
     )
@@ -398,10 +357,3 @@ class ModuleManifest(BaseModel):
             )
 
         return self
-
-    # --- helpers utiles ---
-    def is_compatible_with(self, other: "ModuleManifest") -> bool:
-        return self.compatibility.is_compatible(
-            other.meta.type,
-            other.meta.key,
-        )

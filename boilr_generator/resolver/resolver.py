@@ -36,8 +36,6 @@ class Resolver:
         """Resolve and validate all modules selected by a manifest."""
         resolved_modules = self._resolve_modules(manifest)
 
-        self.validator.validate_requirements(resolved_modules)
-        self.validator.validate_compatibility(resolved_modules)
         self.validator.validate_variables(resolved_modules)
         self.validator.validate_variable_types(resolved_modules)
 

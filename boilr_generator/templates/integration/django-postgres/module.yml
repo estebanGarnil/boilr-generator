@@ -13,12 +13,6 @@ role:
   group: integration
   unique: false
 
-requirements:
-  mandatory: []
-  optional: []
-
-compatibility: {}
-
 requires:
   - capability: backend.python
     binding: backend

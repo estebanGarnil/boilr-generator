@@ -14,14 +14,6 @@ role:
   group: backend
   unique: true
 
-requirements:
-  mandatory:
-    - type: database
-      unique: true
-  optional:
-    - type: cache
-    - type: proxy
-
 dependencies:
   base:
     - Django>=5.0,<6.0
@@ -33,19 +25,6 @@ dependencies:
 
   cors:
     - django-cors-headers>=4.3.1
-
-
-compatibility:
-  frontend:
-    - vue
-    - react
-  database:
-    - postgres
-    - mysql
-  cache:
-    - redis
-  proxy:
-    - nginx
 
 provides:
   - capability: backend.python

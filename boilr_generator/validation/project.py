@@ -31,7 +31,6 @@ def validate_project(
         return result
 
     _validate_module_inputs(manifest, registry, result)
-    _validate_requirements(manifest, registry, result)
     _validate_unique_roles(manifest, registry, result)
 
     if not result.is_valid:
@@ -228,46 +227,6 @@ def _validate_field_types(
                 f"for {field_name}."
             ),
         )
-
-
-def _validate_requirements(
-    manifest: ProjectManifest,
-    registry: ModuleRegistry,
-    result: ValidationResult,
-) -> None:
-    """Validate mandatory module requirements."""
-    selected_modules = [
-        registry.get(project_module.key)
-        for project_module in manifest.modules
-    ]
-
-    selected_types = {module.meta.type for module in selected_modules}
-
-    for module in selected_modules:
-        for requirement in module.requirements.mandatory:
-            if requirement.type in selected_types:
-                continue
-
-            result.add_error(
-                code="missing_requirement",
-                message=(
-                    f"Module {module.meta.key} requires "
-                    f"a module of type {requirement.type}."
-                ),
-                module_key=module.meta.key,
-                field_path=(
-                    f"modules.{module.meta.key}."
-                    f"requirements.{requirement.type}"
-                ),
-                context={
-                    "required_type": requirement.type,
-                    "selected_types": sorted(selected_types),
-                },
-                suggestion=(
-                    f"Add a module of type {requirement.type} "
-                    f"to the project manifest."
-                ),
-            )
 
 
 def _validate_unique_roles(

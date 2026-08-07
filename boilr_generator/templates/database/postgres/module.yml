@@ -14,14 +14,6 @@ role:
   group: database
   unique: true
 
-requirements:
-  mandatory: []
-  optional: []
-
-compatibility:
-  backend:
-    - django
-
 provides:
   - capability: database.connection
     values:
