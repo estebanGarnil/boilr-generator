@@ -12,7 +12,6 @@ meta:
 
 role:
   group: backend
-  unique: true
 
 dependencies:
   base:

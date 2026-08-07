@@ -14,9 +14,7 @@ class ModuleMeta(BaseModel):
 
 
 class ModuleRole(BaseModel):
-    group: str  # backend, frontend, database...
-    unique: bool = False
-
+    group: str
 
 
 # --- COMPATIBILITY ---

@@ -31,7 +31,6 @@ def validate_project(
         return result
 
     _validate_module_inputs(manifest, registry, result)
-    _validate_unique_roles(manifest, registry, result)
 
     if not result.is_valid:
         return result
@@ -225,48 +224,6 @@ def _validate_field_types(
             suggestion=(
                 f"Provide a value of type {definition.type} "
                 f"for {field_name}."
-            ),
-        )
-
-
-def _validate_unique_roles(
-    manifest: ProjectManifest,
-    registry: ModuleRegistry,
-    result: ValidationResult,
-) -> None:
-    """Validate unique module roles."""
-    selected_modules = [
-        registry.get(project_module.key)
-        for project_module in manifest.modules
-    ]
-
-    seen_groups: dict[str, str] = {}
-
-    for module in selected_modules:
-        if not module.role.unique:
-            continue
-
-        group = module.role.group
-
-        if group not in seen_groups:
-            seen_groups[group] = module.meta.key
-            continue
-
-        result.add_error(
-            code="duplicate_unique_role",
-            message=(
-                f"Modules {seen_groups[group]} and {module.meta.key} "
-                f"cannot both be used because role {group} is unique."
-            ),
-            module_key=module.meta.key,
-            field_path=f"modules.{module.meta.key}.role.{group}",
-            context={
-                "role": group,
-                "first_module": seen_groups[group],
-                "conflicting_module": module.meta.key,
-            },
-            suggestion=(
-                f"Keep only one module using the unique role {group}."
             ),
         )
 

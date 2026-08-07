@@ -12,7 +12,6 @@ meta:
 
 role:
   group: database
-  unique: true
 
 provides:
   - capability: database.connection
