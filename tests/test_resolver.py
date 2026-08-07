@@ -1,12 +1,10 @@
 import pytest
-
+from boilr_generator.exceptions import (
+    InvalidVariableTypeError,
+    MissingVariableError,
+)
 from boilr_generator.manifest import load_project_manifest_from_dict
 from boilr_generator.resolver import Resolver
-from boilr_generator.resolver.validator import (
-    RequirementValidationError,
-    VariableTypeValidationError,
-    VariableValidationError,
-)
 
 
 def test_resolver_resolves_valid_project(registry, manifest):
@@ -17,31 +15,27 @@ def test_resolver_resolves_valid_project(registry, manifest):
     assert resolved_project.has_module("django") is True
 
 
-def test_resolver_orders_modules_by_priority(resolved_project):
+def test_resolver_orders_modules_by_dependency_graph(
+    resolved_project,
+):
     ordered_keys = [
         module.key
         for module in resolved_project.ordered_modules()
     ]
 
-    assert ordered_keys == ["postgres", "django"]
-
-
-def test_resolver_raises_when_required_database_is_missing(registry, valid_manifest_data):
-    valid_manifest_data["modules"] = [
-        module
-        for module in valid_manifest_data["modules"]
-        if module["key"] != "postgres"
+    assert ordered_keys == [
+        "postgres",
+        "django",
+        "django-postgres",
     ]
 
-    manifest = load_project_manifest_from_dict(valid_manifest_data)
-
-    with pytest.raises(RequirementValidationError):
-        Resolver(registry).resolve(manifest)
-
-
-def test_resolver_raises_when_required_variable_is_missing(registry, valid_manifest_data):
+def test_resolver_raises_when_required_variable_is_missing(
+    registry,
+    valid_manifest_data,
+):
     django_module = next(
-        module for module in valid_manifest_data["modules"]
+        module
+        for module in valid_manifest_data["modules"]
         if module["key"] == "django"
     )
 
@@ -49,13 +43,25 @@ def test_resolver_raises_when_required_variable_is_missing(registry, valid_manif
 
     manifest = load_project_manifest_from_dict(valid_manifest_data)
 
-    with pytest.raises(VariableValidationError):
+    with pytest.raises(MissingVariableError) as error_info:
         Resolver(registry).resolve(manifest)
 
+    error = error_info.value
 
-def test_resolver_raises_when_variable_type_is_invalid(registry, valid_manifest_data):
+    assert error.code == "missing_variable"
+    assert error.module_key == "django"
+    assert error.field_path == "modules.django.variables.secret_key"
+    assert error.context["variable"] == "secret_key"
+    assert error.suggestion is not None
+
+
+def test_resolver_raises_when_variable_type_is_invalid(
+    registry,
+    valid_manifest_data,
+):
     postgres_module = next(
-        module for module in valid_manifest_data["modules"]
+        module
+        for module in valid_manifest_data["modules"]
         if module["key"] == "postgres"
     )
 
@@ -63,5 +69,38 @@ def test_resolver_raises_when_variable_type_is_invalid(registry, valid_manifest_
 
     manifest = load_project_manifest_from_dict(valid_manifest_data)
 
-    with pytest.raises(VariableTypeValidationError):
+    with pytest.raises(InvalidVariableTypeError) as error_info:
         Resolver(registry).resolve(manifest)
+
+    error = error_info.value
+
+    assert error.code == "invalid_variable_type"
+    assert error.module_key == "postgres"
+    assert error.field_path == "modules.postgres.variables.db_port"
+    assert error.context["expected_type"] == "int"
+    assert error.context["actual_type"] == "str"
+
+
+def test_resolver_rejects_boolean_for_integer_variable(
+    registry,
+    valid_manifest_data,
+):
+    postgres_module = next(
+        module
+        for module in valid_manifest_data["modules"]
+        if module["key"] == "postgres"
+    )
+
+    postgres_module["variables"]["db_port"] = True
+
+    manifest = load_project_manifest_from_dict(valid_manifest_data)
+
+    with pytest.raises(InvalidVariableTypeError) as error_info:
+        Resolver(registry).resolve(manifest)
+
+    error = error_info.value
+
+    assert error.module_key == "postgres"
+    assert error.field_path == "modules.postgres.variables.db_port"
+    assert error.context["expected_type"] == "int"
+    assert error.context["actual_type"] == "bool"

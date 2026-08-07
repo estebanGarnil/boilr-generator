@@ -12,15 +12,17 @@ meta:
 
 role:
   group: database
-  unique: true
 
-requirements:
-  mandatory: []
-  optional: []
-
-compatibility:
-  backend:
-    - django
+provides:
+  - capability: database.connection
+    values:
+      engine: postgresql
+      host: db
+      port: "{{ db_port }}"
+      name: "{{ db_name }}"
+      user: "{{ db_user }}"
+      password: "{{ db_password }}"
+      service: db
 
 variables:
   db_name:

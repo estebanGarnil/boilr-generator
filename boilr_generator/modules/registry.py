@@ -1,8 +1,9 @@
-from pathlib import Path 
+from pathlib import Path
 
+from boilr_generator.core.exceptions import DuplicateModuleError, ModuleNotFoundError
 from boilr_generator.modules.loader import load_module_from_yaml
 from boilr_generator.modules.schemas import ModuleManifest
-from boilr_generator.core.exceptions import DuplicateModuleError, ModuleNotFoundError
+
 
 class ModuleRegistry: 
     def __init__(self, base_path: str | Path):

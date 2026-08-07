@@ -1,4 +1,4 @@
-from typing import Any 
+from typing import Any
 
 from boilr_generator.manifest.schemas import ProjectModule
 from boilr_generator.modules.schemas import ModuleManifest

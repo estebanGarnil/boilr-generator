@@ -1,10 +1,9 @@
-from typing import Any 
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from boilr_generator.modules.schemas import ModuleManifest
-
 
 
 class ResolvedModule(BaseModel):

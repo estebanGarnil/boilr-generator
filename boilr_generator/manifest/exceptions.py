@@ -1,10 +1,21 @@
-class ManifestError(Exception):
-    """Base exception for manifest-related errors."""
+"""Manifest exception compatibility exports."""
 
+from boilr_generator.exceptions import (
+    ManifestError,
+    ManifestLoadError,
+    ManifestNotFoundError,
+    ManifestParseError,
+    ManifestSchemaError,
+)
 
-class ManifestLoadError(ManifestError):
-    """Raised when a manifest cannot be loaded."""
+# Legacy alias.
+ManifestValidationError = ManifestSchemaError
 
-
-class ManifestValidationError(ManifestError):
-    """Raised when a manifest is invalid."""
+__all__ = [
+    "ManifestError",
+    "ManifestLoadError",
+    "ManifestNotFoundError",
+    "ManifestParseError",
+    "ManifestSchemaError",
+    "ManifestValidationError",
+]

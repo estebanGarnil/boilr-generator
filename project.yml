@@ -20,13 +20,9 @@ modules:
         - 127.0.0.1
       backend_port: 8000
       debug: true
-      db_engine: postgresql
-      db_host: db
-      db_port: 5432
-      db_name: my_app
-      db_user: my_app
-      db_password: password
 
     options:
       rest_framework: true
       cors: true
+
+  - key: django-postgres

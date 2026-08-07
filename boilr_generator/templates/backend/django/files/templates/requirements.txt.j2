@@ -14,14 +14,6 @@
 {% endfor %}
 {% endif %}
 
-{% if db_engine in ["postgres", "postgresql"] %}
-{% for dep in dependencies.postgres %}
+{% for dep in extensions["python.dependencies"] %}
 {{ dep }}
 {% endfor %}
-{% endif %}
-
-{% if db_engine == "mysql" %}
-{% for dep in dependencies.mysql %}
-{{ dep }}
-{% endfor %}
-{% endif %}

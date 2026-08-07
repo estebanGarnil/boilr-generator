@@ -12,15 +12,6 @@ meta:
 
 role:
   group: backend
-  unique: true
-
-requirements:
-  mandatory:
-    - type: database
-      unique: true
-  optional:
-    - type: cache
-    - type: proxy
 
 dependencies:
   base:
@@ -34,23 +25,36 @@ dependencies:
   cors:
     - django-cors-headers>=4.3.1
 
-  postgres:
-    - psycopg[binary]
+provides:
+  - capability: backend.python
+    values:
+      runtime: python
+      framework: django
 
-  mysql:
-    - mysqlclient
+requires:
+  - capability: database.connection
+    binding: primary_database
+    optional: false
+    unique: true
+    contract:
+      engine: string
+      host: string
+      port: int
+      name: string
+      user: string
+      password: string
+      service: string
 
-compatibility:
-  frontend:
-    - vue
-    - react
-  database:
-    - postgres
-    - mysql
-  cache:
-    - redis
-  proxy:
-    - nginx
+extension_points:
+  python.dependencies:
+    type: list
+    merge: append_unique
+    default: []
+
+  database.backend:
+    type: string
+    merge: replace
+    required: true
 
 variables:
   project_name:
@@ -88,37 +92,6 @@ variables:
       - localhost
       - 127.0.0.1
     description: Allowed hosts
-
-  db_engine:
-    type: string
-    required: true
-    description: Database engine (postgresql, mysql)
-
-  db_host:
-    type: string
-    required: true
-    default: db
-    description: Database host service name
-
-  db_port:
-    type: int
-    required: true
-    description: Database port
-
-  db_name:
-    type: string
-    required: true
-    description: Database name
-
-  db_user:
-    type: string
-    required: true
-    description: Database user
-
-  db_password:
-    type: string
-    required: true
-    description: Database password
 
 options:
   rest_framework:
@@ -178,7 +151,7 @@ docker:
         - "{{ backend_port }}:8000"
 
       depends_on:
-        - db  # convention: database service name = "db"
+        - "{{ bindings.primary_database.service }}"
 
       env_file:
         - .env
@@ -190,12 +163,12 @@ exports:
     DJANGO_DEBUG: "{{ debug }}"
     DJANGO_ALLOWED_HOSTS: "{{ allowed_hosts | join(',') }}"
 
-    DB_ENGINE: "{{ db_engine }}"
-    DB_HOST: "{{ db_host }}"
-    DB_PORT: "{{ db_port }}"
-    DB_NAME: "{{ db_name }}"
-    DB_USER: "{{ db_user }}"
-    DB_PASSWORD: "{{ db_password }}"
+    DB_ENGINE: "{{ bindings.primary_database.engine }}"
+    DB_HOST: "{{ bindings.primary_database.host }}"
+    DB_PORT: "{{ bindings.primary_database.port }}"
+    DB_NAME: "{{ bindings.primary_database.name }}"
+    DB_USER: "{{ bindings.primary_database.user }}"
+    DB_PASSWORD: "{{ bindings.primary_database.password }}"
 
 docs:
   summary: Reusable Django backend module

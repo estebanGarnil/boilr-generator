@@ -1,15 +1,18 @@
 import pytest
-
+from boilr_generator.exceptions import ManifestSchemaError
 from boilr_generator.manifest import load_project_manifest_from_dict
-from boilr_generator.core.exceptions import DuplicateModuleError
+
 
 def test_load_valid_manifest(valid_manifest_data):
     manifest = load_project_manifest_from_dict(valid_manifest_data)
 
     assert manifest.project.name == "my_app"
     assert manifest.project.type == "fullstack_web"
-    assert manifest.list_module_keys() == ["postgres", "django"]
-
+    assert manifest.list_module_keys() == [
+        "postgres",
+        "django",
+        "django-postgres",
+    ]
 
 def test_manifest_has_module(manifest):
     assert manifest.has_module("django") is True
@@ -34,5 +37,5 @@ def test_manifest_rejects_duplicate_modules(valid_manifest_data):
         }
     )
 
-    with pytest.raises(DuplicateModuleError):
+    with pytest.raises(ManifestSchemaError):
         load_project_manifest_from_dict(valid_manifest_data)

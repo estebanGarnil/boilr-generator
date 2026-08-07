@@ -1,5 +1,33 @@
-class ResolverError(Exception):
-    """Base exception for resolver-related errors."""
+"""Resolver exception compatibility exports."""
 
-class ModuleResolutionError(ResolverError):
-    """Raised when a requested module cannot be resolved."""
+from boilr_generator.exceptions import (
+    AmbiguousProviderError,
+    AmbiguousRequirementError,
+    BindingError,
+    DependencyCycleError,
+    IncompatibleModuleError,
+    InvalidVariableTypeError,
+    MissingCapabilityError,
+    MissingRequirementError,
+    MissingVariableError,
+    ResolutionError,
+)
+
+# Legacy aliases.
+ResolverError = ResolutionError
+ModuleResolutionError = ResolutionError
+
+__all__ = [
+    "AmbiguousProviderError",
+    "AmbiguousRequirementError",
+    "BindingError",
+    "DependencyCycleError",
+    "IncompatibleModuleError",
+    "InvalidVariableTypeError",
+    "MissingCapabilityError",
+    "MissingRequirementError",
+    "MissingVariableError",
+    "ModuleResolutionError",
+    "ResolutionError",
+    "ResolverError",
+]

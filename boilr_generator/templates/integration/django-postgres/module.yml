@@ -1,0 +1,50 @@
+meta:
+  name: Django PostgreSQL Integration
+  key: django-postgres
+  type: integration
+  version: 1.0.0
+  description: Connects a Python backend to PostgreSQL
+  tags:
+    - integration
+    - python
+    - postgresql
+
+role:
+  group: integration
+
+requires:
+  - capability: backend.python
+    binding: backend
+    optional: false
+    unique: true
+
+  - capability: database.connection
+    binding: database
+    optional: false
+    unique: true
+
+contributions:
+  - target: backend
+    extension_point: python.dependencies
+    value:
+      - psycopg[binary]
+
+  - target: backend
+    extension_point: database.backend
+    value: django.db.backends.postgresql
+
+variables: {}
+options: {}
+
+assembly:
+  priority: 150
+  destination_root: .
+
+sources:
+  copy: []
+  render: []
+
+docs:
+  summary: PostgreSQL adapter for Python backends
+  notes:
+    - Adds the PostgreSQL Python driver through a typed contribution

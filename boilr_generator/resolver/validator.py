@@ -1,110 +1,124 @@
+"""Validation rules used during project resolution."""
+
 from typing import Any
 
 from boilr_generator.core import ResolvedModule
-from boilr_generator.resolver.exceptions import ResolverError
+from boilr_generator.exceptions import (
+    InvalidVariableTypeError,
+    MissingVariableError,
+)
+
+TYPE_MAPPING: dict[str, type] = {
+    "string": str,
+    "int": int,
+    "boolean": bool,
+    "list": list,
+}
 
 
-class RequirementValidationError(ResolverError):
-    """Raised when module requirements are not satisfied."""
+class ProjectValidator:
+    """Validate resolved modules before assembling the project."""
 
-class CompatibilityValidationError(ResolverError):
-    """Raised when modules are not compatible."""    
-
-class VariableValidationError(ResolverError):
-    """Raised when module variables are invalid."""
-
-class VariableTypeValidationError(ResolverError):
-    """Raised when a variable has an invalid type."""
-
-
-class ProjectValidator: 
-    def validate_requirements(self, modules: list[ResolvedModule]) -> None:
-        for module in modules:
-            self._validate_module_requirements(module, modules)
-
-    def _validate_compatibility(
-            self, 
-            modules: list[ResolvedModule]  
+    def validate_variables(
+        self,
+        modules: list[ResolvedModule],
     ) -> None:
-        for module in modules: 
-            for other in modules:
-                if module == other: 
-                    continue
-                if not module.manifest.compatibility.is_compatible(
-                    other.type,
-                    other.key,
-                ):
-                    raise CompatibilityValidationError(
-                        f"Module '{module.key}' is not compatible with "
-                        f"'{other.key}' (type: {other.type})."
-                    )        
-
-    def _validate_module_requirements(
-            self, 
-            module: ResolvedModule, 
-            all_modules: list[ResolvedModule],
-    ) -> None: 
-        for requirement in module.manifest.requirements.mandatory: 
-            matching_modules = [
-                candidate 
-                for candidate in all_modules
-                if candidate.type == requirement.type
-            ]
-
-            if not matching_modules: 
-                raise RequirementValidationError(
-                    f"Module '{module.key}' requires a module of type "
-                    f"'{requirement.type}', but none was found."
-                )
-            
-            if requirement.unique and len(matching_modules) > 1:
-                raise RequirementValidationError(
-                    f"Module '{module.key}' requires a unique module of type "
-                    f"'{requirement.type}', but {len(matching_modules)} were found."
-                )
-    
-    def validate_variables(self, modules: list[ResolvedModule]) -> None:
+        """Validate required variables for every selected module."""
         for module in modules:
             self._validate_module_variables(module)
-        
-    def _validate_module_variables(self, module: ResolvedModule) -> None:
+
+    def _validate_module_variables(
+        self,
+        module: ResolvedModule,
+    ) -> None:
+        """Validate the required variables of one module."""
         for name, definition in module.manifest.variables.items():
-            if definition.required and name not in module.variables:
-                raise VariableValidationError(
-                    f"Module '{module.key}' requires variable '{name}', "
-                    "but it was not provided and has no default."
-                )
-            
-    def validate_variable_types(self, modules: list[ResolvedModule]) -> None:
-        for module in modules: 
+            if not definition.required or name in module.variables:
+                continue
+
+            raise MissingVariableError(
+                (
+                    f"Module '{module.key}' requires variable "
+                    f"'{name}', but it was not provided and "
+                    "has no default."
+                ),
+                module_key=module.key,
+                field_path=(
+                    f"modules.{module.key}.variables.{name}"
+                ),
+                context={
+                    "variable": name,
+                    "required": True,
+                },
+                suggestion=(
+                    f"Provide variable '{name}' for module "
+                    f"'{module.key}'."
+                ),
+            )
+
+    def validate_variable_types(
+        self,
+        modules: list[ResolvedModule],
+    ) -> None:
+        """Validate the types of all resolved module variables."""
+        for module in modules:
             self._validate_module_variable_types(module)
-    
-    def _validate_module_variable_types(self, module: ResolvedModule) -> None:
+
+    def _validate_module_variable_types(
+        self,
+        module: ResolvedModule,
+    ) -> None:
+        """Validate the resolved variable types of one module."""
         for name, value in module.variables.items():
             definition = module.manifest.variables.get(name)
 
-            if not definition:
-                continue  # variable inconnue → on ignore pour l'instant
+            if definition is None:
+                continue
 
             expected_type = definition.type
 
-            if not self._check_type(value, expected_type):
-                raise VariableTypeValidationError(
-                    f"Variable '{name}' in module '{module.key}' "
-                    f"must be of type '{expected_type}', got '{type(value).__name__}'."
-                )
+            if self._check_type(value, expected_type):
+                continue
 
-    def _check_type(self, value: Any, expected_type: str) -> bool:
-        if expected_type == "string":
-            return isinstance(value, str)
+            raise InvalidVariableTypeError(
+                (
+                    f"Variable '{name}' in module "
+                    f"'{module.key}' must be of type "
+                    f"'{expected_type}', got "
+                    f"'{type(value).__name__}'."
+                ),
+                module_key=module.key,
+                field_path=(
+                    f"modules.{module.key}.variables.{name}"
+                ),
+                context={
+                    "variable": name,
+                    "expected_type": expected_type,
+                    "actual_type": type(value).__name__,
+                },
+                suggestion=(
+                    f"Provide a value of type "
+                    f"'{expected_type}' for variable '{name}'."
+                ),
+            )
 
-        if expected_type == "int":
-            return isinstance(value, int)
+    def _check_type(
+        self,
+        value: Any,
+        expected_type: str,
+    ) -> bool:
+        """Check a type without accepting booleans as integers."""
+        expected_python_type = TYPE_MAPPING.get(
+            expected_type
+        )
 
-        if expected_type == "boolean":
-            return isinstance(value, bool)
+        if expected_python_type is None:
+            return False
 
-        if expected_type == "list":
-            return isinstance(value, list)
+        if expected_python_type is int:
+            return (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+            )
 
-        return True
+        return isinstance(value, expected_python_type)

@@ -1,7 +1,6 @@
 import pytest
-
-from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.core.exceptions import ModuleNotFoundError
+
 
 def test_registry_loads_available_modules(registry):
     keys = registry.list_keys()

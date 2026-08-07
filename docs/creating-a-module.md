@@ -1,285 +1,63 @@
-# Contributing to Boilr
+# Creating a Boilr Module
 
-Thank you for your interest in contributing to Boilr.
+A Boilr module is a reusable, declarative building block.
 
-## What is a Boilr Module?
+Modules can provide capabilities, consume capabilities from other modules, expose extension points, contribute values, copy files, render templates, define Docker services, and export environment variables.
 
-A module is a reusable building block that contributes:
+Most new technologies can be added without modifying the core generator.
 
-- files
-- Docker services
-- environment variables
-- dependencies
-- compatibility rules
+## Module categories
 
-Multiple modules are assembled together to generate a complete Dockerized application stack.
+Typical module categories include:
 
-## The Goal
+- backend;
+- frontend;
+- database;
+- cache;
+- proxy;
+- infrastructure;
+- integration.
 
-Boilr is a modular Docker-first project generator.
+An integration module connects two or more independent modules. For example, `django-postgres` contributes the PostgreSQL driver and Django database backend without placing PostgreSQL-specific logic inside the Django module.
 
-The core engine is responsible for:
-
-* validating projects
-* resolving dependencies
-* generating Docker Compose stacks
-* rendering templates
-
-As a contributor, you **do not need to understand the generator internals**.
-
-Most contributions only require knowledge of the technology you want to add.
-
-If you know:
-
-* React
-* Vue
-* Angular
-* FastAPI
-* Django
-* PostgreSQL
-* MongoDB
-* Redis
-* RabbitMQ
-* Nginx
-
-you can already contribute.
-
----
-
-
-# How Can I Contribute?
-
-Boilr is designed to be extended primarily through modules.
-
-Most contributors will never need to modify the generator itself.
-
-If you know how to build and Dockerize a technology such as React, Vue, Django, FastAPI, PostgreSQL or Redis, you can already make valuable contributions.
-
-There are four main ways to contribute.
-
----
-
-## 1. Create a New Module
-
-This is currently the most valuable contribution.
-
-A module represents a reusable building block that can contribute:
-
-- files
-- Docker services
-- environment variables
-- dependencies
-- compatibility rules
-
-Examples of modules:
-
-- React
-- Next.js
-- Vue
-- Angular
-- FastAPI
-- NestJS
-- MongoDB
-- RabbitMQ
-- Elasticsearch
-- Celery
-- Traefik
-
-Every new module expands the Boilr ecosystem and unlocks new project combinations.
-
-For example:
+## Directory structure
 
 ```text
-Django + PostgreSQL
+module-name/
+|-- module.yml
+|-- files/
+`-- docs/
 ```
 
-or
+Only `module.yml` is mandatory. The other directories depend on what the module generates.
 
-```text
-FastAPI + MongoDB + Redis
-```
-
-can be generated from independent modules.
-
----
-
-## 2. Improve Existing Modules
-
-You do not need to create a new module to contribute.
-
-Improving existing modules is just as valuable.
-
-Examples:
-
-### Django
-
-- improve Docker configuration
-- improve project structure
-- add optional features
-- improve generated settings
-- improve dependency management
-
-### PostgreSQL
-
-- improve initialization scripts
-- improve Docker configuration
-- improve exported variables
-
-### Redis
-
-- improve persistence options
-- improve configuration defaults
-
-### Any Module
-
-- improve documentation
-- fix bugs
-- improve templates
-- improve Docker services
-- improve compatibility rules
-
----
-
-## 3. Improve Documentation
-
-Good documentation is essential for adoption.
-
-Examples:
-
-- tutorials
-- getting started guides
-- example manifests
-- module documentation
-- architecture documentation
-- contribution guides
-
-Documentation contributions are always welcome.
-
----
-
-## 4. Advanced Contributions
-
-Although most contributors only need to work on modules, improvements to the Boilr engine are also welcome.
-
-Examples:
-
-- validation improvements
-- resolver improvements
-- generation plan improvements
-- Docker generation improvements
-- CLI development
-- API development
-- frontend development
-- testing infrastructure
-- developer experience improvements
-
-Current architecture:
-
-```text
-Manifest
-    ↓
-Validation
-    ↓
-Module Registry
-    ↓
-Resolver
-    ↓
-Generation Plan
-    ↓
-Project Generator
-```
-
-Before modifying core behavior, please open an issue to discuss the proposed change.
-
----
-
-# Why Module Contributions Matter
-
-Boilr's long-term goal is not simply to generate Django projects.
-
-The goal is to provide a rich ecosystem of reusable Dockerized modules that can be assembled together to create complete application stacks.
-
-The more modules available, the more powerful Boilr becomes.
-
-For this reason, module contributions are currently the highest priority for the project.
-
-
-# Module Structure
-
-Every module follows the same structure:
-
-```text
-module_name/
-├── module.yml
-├── files/
-└── docs/
-```
-
-Example:
-
-```text
-django/
-├── module.yml
-├── files/
-└── docs/
-```
-
----
-
-# The module.yml File
-
-The `module.yml` file is the heart of a module.
-
-It describes:
-
-* what the module is
-* what it requires
-* what it generates
-* which Docker services it provides
-* which files it contributes
-
-The generator uses this file to understand how the module should be assembled.
-
----
-
-# Example: Django Module
-
-Below is a simplified example extracted from the Django module.
+## Minimal manifest
 
 ```yaml
 meta:
-  name: Django
-  key: django
+  name: Example
+  key: example
   type: backend
+  version: 1.0.0
+  description: Example reusable module
+  tags:
+    - example
 
 role:
   group: backend
-  unique: true
 
-requirements:
-  mandatory:
-    - type: database
+assembly:
+  priority: 100
+  destination_root: backend
 
-compatibility:
-  database:
-    - postgres
-    - mysql
+sources:
+  copy: []
+  render: []
 ```
 
-This tells Boilr:
+## Metadata
 
-* this module is a backend
-* only one backend may exist
-* it requires a database
-* it supports PostgreSQL and MySQL
-
----
-
-# Meta
-
-Identifies the module.
-
-Example:
+The `meta` section identifies the module:
 
 ```yaml
 meta:
@@ -287,157 +65,347 @@ meta:
   key: django
   type: backend
   version: 1.0.0
+  description: Django backend
+  tags:
+    - python
+    - django
 ```
 
-Required fields:
+The module key must be lowercase and unique in the registry.
 
-* name
-* key
-* type
-* version
+The `role.group` field classifies the module. Uniqueness is not defined globally by roles; consumers express their actual provider requirements through capability bindings.
 
----
+## Variables
 
-# Role
-
-Defines how the module behaves inside a project.
-
-Example:
-
-```yaml
-role:
-  group: backend
-  unique: true
-```
-
-Meaning:
-
-* the module belongs to the backend group
-* only one backend may be selected
-
----
-
-# Requirements
-
-Defines dependencies.
-
-Example:
-
-```yaml
-requirements:
-  mandatory:
-    - type: database
-```
-
-The Django module cannot be used without a database module.
-
----
-
-# Compatibility
-
-Defines compatible modules.
-
-Example:
-
-```yaml
-compatibility:
-  database:
-    - postgres
-    - mysql
-
-  cache:
-    - redis
-
-  proxy:
-    - nginx
-```
-
-This means the Django module supports:
-
-* PostgreSQL
-* MySQL
-* Redis
-* Nginx
-
----
-
-# Variables
-
-Variables are values provided by the user.
-
-Example:
+Variables are values supplied by the project manifest:
 
 ```yaml
 variables:
   project_name:
     type: string
     required: true
+    description: Project name
 
   backend_port:
     type: int
     required: true
     default: 8000
+    description: Published backend port
 ```
 
-Supported types:
+Supported variable types are:
 
-* string
-* int
-* boolean
-* list
+- `string`;
+- `int`;
+- `boolean`;
+- `list`.
 
----
+A required variable must either have a default or be provided by the project manifest.
 
-# Options
+Variables are available as top-level Jinja values:
 
-Options enable optional functionality.
+```jinja
+{{ project_name }}
+{{ backend_port }}
+```
 
-Example:
+## Options
+
+Options enable configurable module features:
 
 ```yaml
 options:
   rest_framework:
     type: boolean
     default: true
+    description: Enable Django REST Framework
 
   cors:
     type: boolean
     default: true
+    description: Enable CORS support
 ```
 
-These options can activate additional dependencies and configuration.
+Options are available through the `options` namespace:
 
----
+```jinja
+{{ options.rest_framework }}
+{{ options.cors }}
+```
 
-# Sources
+## Providing capabilities
 
-Sources define which files are generated.
+A module exposes reusable data through `provides`:
 
-Copy files:
+```yaml
+provides:
+  - capability: database.connection
+    values:
+      engine: postgresql
+      host: db
+      port: "{{ db_port }}"
+      name: "{{ db_name }}"
+      user: "{{ db_user }}"
+      password: "{{ db_password }}"
+      service: db
+```
+
+Provider values are rendered with the provider module's variables. Native Jinja rendering preserves integers, booleans, lists, and dictionaries.
+
+Each module may provide a given capability only once.
+
+## Requiring capabilities
+
+A consumer declares its needs through `requires`:
+
+```yaml
+requires:
+  - capability: database.connection
+    binding: primary_database
+    optional: false
+    unique: true
+    contract:
+      engine: string
+      host: string
+      port: int
+      name: string
+      user: string
+      password: string
+      service: string
+```
+
+Fields:
+
+- `capability`: capability identifier;
+- `binding`: local name exposed to the consumer;
+- `optional`: whether generation can continue without a provider;
+- `unique`: whether exactly one provider is expected;
+- `contract`: required provider fields and their types.
+
+Supported contract types are:
+
+- `string`;
+- `int`;
+- `boolean`;
+- `list`.
+
+If `unique` is `true`, the binding contains one provider value dictionary:
+
+```jinja
+{{ bindings.primary_database.host }}
+```
+
+If `unique` is `false`, the binding contains a list of provider value dictionaries.
+
+Missing providers, ambiguous unique providers, and invalid contracts are rejected during resolution.
+
+## Extension points
+
+A module exposes typed locations that integration modules may extend:
+
+```yaml
+extension_points:
+  python.dependencies:
+    type: list
+    merge: append_unique
+    default: []
+
+  database.backend:
+    type: string
+    merge: replace
+    required: true
+```
+
+Supported extension-point types are:
+
+- `string`;
+- `int`;
+- `boolean`;
+- `list`;
+- `dict`.
+
+Supported merge strategies depend on the type:
+
+| Type | Strategies |
+|---|---|
+| `string` | `replace` |
+| `int` | `replace` |
+| `boolean` | `replace` |
+| `list` | `replace`, `append`, `append_unique` |
+| `dict` | `replace`, `deep_merge` |
+
+A required extension point must receive at least one contribution.
+
+Final extension values are available to templates:
+
+```jinja
+{{ extensions["database.backend"] }}
+```
+
+## Contributions
+
+A contribution targets a module through one of the contributor's bindings:
+
+```yaml
+contributions:
+  - target: backend
+    extension_point: python.dependencies
+    value:
+      - psycopg[binary]
+
+  - target: backend
+    extension_point: database.backend
+    value: django.db.backends.postgresql
+```
+
+The target must match a binding declared in the same module.
+
+Contribution values can use:
+
+- contributor variables;
+- `options`;
+- `bindings`.
+
+Example of a dynamic contribution:
+
+```yaml
+contributions:
+  - target: backend
+    extension_point: database.options
+    value:
+      engine: "{{ bindings.database.engine }}"
+      port: "{{ bindings.database.port }}"
+```
+
+Contribution values cannot reference `extensions`, because extension values are produced only after all contributions have been collected.
+
+Boilr validates the rendered value against the target extension-point type before applying its merge strategy.
+
+## Integration modules
+
+An integration module connects capabilities and contributions without generating technology-specific branches in the core engine.
+
+Example:
+
+```yaml
+meta:
+  name: Django PostgreSQL Integration
+  key: django-postgres
+  type: integration
+  version: 1.0.0
+
+role:
+  group: integration
+
+requires:
+  - capability: backend.python
+    binding: backend
+    optional: false
+    unique: true
+    contract:
+      runtime: string
+      framework: string
+
+  - capability: database.connection
+    binding: database
+    optional: false
+    unique: true
+    contract:
+      engine: string
+      host: string
+      port: int
+      name: string
+      user: string
+      password: string
+      service: string
+
+contributions:
+  - target: backend
+    extension_point: python.dependencies
+    value:
+      - psycopg[binary]
+
+  - target: backend
+    extension_point: database.backend
+    value: django.db.backends.postgresql
+
+assembly:
+  priority: 200
+  destination_root: .
+
+sources:
+  copy: []
+  render: []
+```
+
+The dependency graph places providers before consumers and the integration module after the modules it connects.
+
+## Dependencies
+
+Python or runtime dependencies can be declared by feature:
+
+```yaml
+dependencies:
+  base:
+    - Django>=5.0,<6.0
+    - gunicorn>=21.2.0
+
+  rest_framework:
+    - djangorestframework>=3.15.0
+```
+
+Templates can access the dependency structure through:
+
+```jinja
+{{ dependencies.base }}
+```
+
+Extension-point contributions can add dependencies supplied by integration modules.
+
+## Copy sources
+
+Copy operations support three strategies:
 
 ```yaml
 sources:
   copy:
     - from: files/apps
       to: backend/apps
+      strategy: merge
 ```
 
-Render templates:
+Strategies:
+
+- `merge`: copy the source tree into the destination, overwrite matching source paths, and retain unrelated destination files;
+- `skip`: if the destination exists, leave the entire destination unchanged;
+- `replace`: remove the destination and recreate it from the source.
+
+Replacement removals are part of the generation plan and must remain strictly inside the project output directory.
+
+## Render sources
+
+Templates are rendered with strict Jinja evaluation:
 
 ```yaml
 sources:
   render:
-    - from: files/templates/manage.py.j2
-      to: backend/manage.py
+    - from: files/templates/settings.py.j2
+      to: backend/config/settings.py
 ```
 
----
+The template context contains:
 
-# Docker Services
+- module variables as top-level values;
+- `options`;
+- `dependencies`;
+- `bindings`;
+- `extensions`.
 
-Modules can contribute Docker services.
+An undefined value produces a structured template-rendering error.
 
-Example:
+## Docker services
+
+Modules can define Docker services and volumes:
 
 ```yaml
 docker:
@@ -445,91 +413,89 @@ docker:
     backend:
       build:
         context: ./backend
+        dockerfile: Dockerfile
+
+      depends_on:
+        - "{{ bindings.primary_database.service }}"
+
+  volumes: {}
 ```
 
-Boilr automatically merges all module services into a single Docker Compose stack.
+Docker values use the complete module rendering context. Services from different modules are merged into one Compose file. Conflicting definitions are rejected.
 
----
+Boilr emits the modern Compose format without the obsolete top-level `version` attribute.
 
-# Environment Variables
+## Environment exports
 
-Modules can export environment variables.
-
-Example:
+Modules can export environment variables:
 
 ```yaml
 exports:
   env:
-    DJANGO_SECRET_KEY: "{{ secret_key }}"
+    DB_HOST: "{{ bindings.primary_database.host }}"
+    DB_PORT: "{{ bindings.primary_database.port }}"
 ```
 
-All exported variables are automatically merged into the generated `.env` file.
+Exports from all modules are rendered and merged into the generated `.env` file. Conflicting values are rejected.
 
----
+## Assembly order
 
-# Documentation
+The `assembly` section provides a stable priority:
 
-Every module should include documentation.
+```yaml
+assembly:
+  priority: 100
+  destination_root: backend
+```
 
-At minimum:
+Capability bindings create the actual dependency graph. Priority is used only as a deterministic ordering hint when dependency constraints do not decide the order.
+
+## Documentation metadata
+
+Each module should describe its purpose:
 
 ```yaml
 docs:
   summary: Reusable Django backend module
+  notes:
+    - Supports Django REST Framework
+    - Supports typed database integrations
 ```
 
-Recommended:
+## Validation checklist
 
-* purpose
-* supported technologies
-* dependencies
-* variables
-* options
-* generated services
+Before opening a pull request, verify:
 
----
+- the module key is lowercase;
+- all required variables have values or defaults;
+- variable and option types are valid;
+- provided capability values satisfy consumer contracts;
+- binding names are unique within the module;
+- contribution targets reference declared bindings;
+- target extension points exist;
+- contribution values match extension-point types;
+- generated destinations do not conflict;
+- copy removals remain inside the output directory;
+- templates render without undefined values;
+- Docker Compose validates successfully;
+- tests and `git diff --check` pass.
 
-# Before Opening a Pull Request
+Run:
 
-Please ensure:
+```powershell
+python -m ruff check boilr_generator tests
+python -m pytest -q
+git diff --check
+```
 
-* the module loads correctly
-* generated files are valid
-* Docker services start correctly
-* documentation is included
+## Core compatibility exports
 
----
+Some historical exception import paths remain temporarily available for backward compatibility.
 
-# Current Priority Modules
+New code should import canonical exceptions from:
 
-The following modules would have the biggest impact:
+```python
+from boilr_generator.exceptions import BoilrError
+```
 
-### Frontend
-
-* React
-* Next.js
-* Vue
-* Angular
-
-### Backend
-
-* FastAPI
-* NestJS
-
-### Databases
-
-* MongoDB
-
-### Infrastructure
-
-* RabbitMQ
-* Elasticsearch
-* Traefik
-
----
-
-# Final Note
-
-Boilr is designed so contributors can extend the ecosystem without modifying the generator itself.
-
-If you can create a Dockerized project manually, you can most likely create a Boilr module.
+The compatibility exports may be removed in a future major release.
