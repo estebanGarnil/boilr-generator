@@ -199,7 +199,12 @@ def test_builtin_django_uses_postgres_binding(
 
     assert django is not None
 
-    assert len(resolved_project.providers) == 1
+    database_providers = resolved_project.providers_for(
+        "database.connection"
+    )
+
+    assert len(database_providers) == 1
+    assert database_providers[0].module_key == "postgres"
     assert len(resolved_project.requirements) == 1
     assert len(resolved_project.bindings) == 1
 

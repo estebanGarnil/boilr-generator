@@ -34,11 +34,6 @@ dependencies:
   cors:
     - django-cors-headers>=4.3.1
 
-  postgres:
-    - psycopg[binary]
-
-  mysql:
-    - mysqlclient
 
 compatibility:
   frontend:
@@ -52,7 +47,12 @@ compatibility:
   proxy:
     - nginx
 
-requires:
+provides:
+  - capability: backend.python
+    values:
+      runtime: python
+      framework: django
+
 requires:
   - capability: database.connection
     binding: primary_database
@@ -66,6 +66,12 @@ requires:
       user: string
       password: string
       service: string
+
+extension_points:
+  python.dependencies:
+    type: list
+    merge: append_unique
+    default: []
 
 variables:
   project_name:

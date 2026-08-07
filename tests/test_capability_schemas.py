@@ -36,6 +36,22 @@ def test_builtin_modules_declare_capability_contracts(
         "primary_database"
     )
 
+    assert any(
+        provider.capability == "backend.python"
+        for provider in django.manifest.provides
+    )
+
+    assert "python.dependencies" in (
+        django.manifest.extension_points
+    )
+
+    extension_point = django.manifest.extension_points[
+        "python.dependencies"
+    ]
+
+    assert extension_point.type == "list"
+    assert extension_point.merge == "append_unique"
+
 
 
 def test_module_manifest_loads_capability_contracts(

@@ -26,6 +26,8 @@ def configure_contribution(
     assert postgres is not None
     assert django is not None
 
+    django.manifest.extension_points = {}
+
     postgres.manifest.extension_points = {
         "database.options": ExtensionPointDefinition(
             type="dict",
