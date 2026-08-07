@@ -29,7 +29,6 @@ class DockerComposeGenerator:
     ) -> dict[str, Any]:
         """Generate and merge Docker contributions."""
         compose: dict[str, Any] = {
-            "version": "3.9",
             "services": {},
             "volumes": {},
         }
@@ -95,7 +94,7 @@ class DockerComposeGenerator:
                 )
                 rendered_volume = self._render_value(
                     volume_config,
-                    module.variables,
+                    context,
                     module_key=module.key,
                     field_path=field_path,
                 )

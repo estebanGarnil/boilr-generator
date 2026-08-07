@@ -111,3 +111,12 @@ def test_docker_generator_reports_template_render_errors(
     assert error.field_path == "modules.postgres.docker.services.db.image"
     assert error.context["target"] == "docker"
     assert error.context["error_type"] == "UndefinedError"
+
+def test_docker_generator_omits_obsolete_version(
+    resolved_project,
+):
+    compose = DockerComposeGenerator().generate(
+        resolved_project
+    )
+
+    assert "version" not in compose
