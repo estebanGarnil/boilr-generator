@@ -133,6 +133,7 @@ class ExtensionPointDefinition(BaseModel):
     type: str
     merge: str = "replace"
     default: Any = None
+    required: bool = False
 
     @model_validator(mode="after")
     def validate_definition(

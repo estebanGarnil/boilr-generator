@@ -17,21 +17,44 @@ def test_graph_builds_edges_from_capability_bindings(
         resolved_project.bindings,
     )
 
-    assert graph.nodes == ["postgres", "django"]
-    assert len(graph.edges) == 1
+    assert graph.nodes == [
+        "postgres",
+        "django",
+        "django-postgres",
+    ]
+    assert len(graph.edges) == 3
 
-    edge = graph.edges[0]
+    database_edge = next(
+        edge
+        for edge in graph.edges
+        if (
+            edge.provider_module_key == "postgres"
+            and edge.consumer_module_key == "django"
+        )
+    )
 
-    assert edge.provider_module_key == "postgres"
-    assert edge.consumer_module_key == "django"
-    assert edge.capability == "database.connection"
-    assert edge.binding_key == "primary_database"
+    assert database_edge.capability == (
+        "database.connection"
+    )
+    assert database_edge.binding_key == (
+        "primary_database"
+    )
 
     assert graph.dependencies_for("django") == [
         "postgres"
     ]
+    assert graph.dependencies_for(
+        "django-postgres"
+    ) == [
+        "django",
+        "postgres",
+    ]
     assert graph.dependents_for("postgres") == [
-        "django"
+        "django",
+        "django-postgres",
+    ]
+    assert graph.dependents_for("django") == [
+        "django-postgres"
     ]
 
 
@@ -42,12 +65,15 @@ def test_graph_orders_provider_before_consumer(
 
     postgres = project.get_module("postgres")
     django = project.get_module("django")
+    integration = project.get_module("django-postgres")
 
     assert postgres is not None
     assert django is not None
+    assert integration is not None
 
     postgres.manifest.assembly.priority = 200
     django.manifest.assembly.priority = 10
+    integration.manifest.assembly.priority = 5
 
     graph = DependencyGraphBuilder().build(
         project.modules,
@@ -57,15 +83,23 @@ def test_graph_orders_provider_before_consumer(
     assert graph.ordered_module_keys == [
         "postgres",
         "django",
+        "django-postgres",
     ]
 
 
 def test_graph_does_not_duplicate_dependency_indegrees(
     resolved_project,
 ):
-    duplicate_binding = resolved_project.bindings[
-        0
-    ].model_copy(
+    django_database_binding = next(
+        binding
+        for binding in resolved_project.bindings
+        if (
+            binding.consumer_module_key == "django"
+            and binding.provider_module_key == "postgres"
+        )
+    )
+
+    duplicate_binding = django_database_binding.model_copy(
         update={
             "binding_key": "secondary_database",
         }
@@ -79,10 +113,11 @@ def test_graph_does_not_duplicate_dependency_indegrees(
         ],
     )
 
-    assert len(graph.edges) == 2
+    assert len(graph.edges) == 4
     assert graph.ordered_module_keys == [
         "postgres",
         "django",
+        "django-postgres",
     ]
 
 
@@ -148,22 +183,46 @@ def test_graph_rejects_dependency_cycles(
         "django",
     ]
 
+
 def test_resolver_stores_dependency_graph(
     resolved_project,
 ):
     graph = resolved_project.dependency_graph
 
-    assert graph.nodes == ["postgres", "django"]
+    assert graph.nodes == [
+        "postgres",
+        "django",
+        "django-postgres",
+    ]
     assert graph.ordered_module_keys == [
         "postgres",
         "django",
+        "django-postgres",
     ]
-    assert len(graph.edges) == 1
+    assert len(graph.edges) == 3
 
-    edge = graph.edges[0]
+    edge_pairs = {
+        (
+            edge.provider_module_key,
+            edge.consumer_module_key,
+        )
+        for edge in graph.edges
+    }
 
-    assert edge.provider_module_key == "postgres"
-    assert edge.consumer_module_key == "django"
+    assert edge_pairs == {
+        (
+            "postgres",
+            "django",
+        ),
+        (
+            "django",
+            "django-postgres",
+        ),
+        (
+            "postgres",
+            "django-postgres",
+        ),
+    }
 
 
 def test_resolved_project_uses_dependency_graph_order(
@@ -173,16 +232,23 @@ def test_resolved_project_uses_dependency_graph_order(
 
     postgres = project.get_module("postgres")
     django = project.get_module("django")
+    integration = project.get_module("django-postgres")
 
     assert postgres is not None
     assert django is not None
+    assert integration is not None
 
     postgres.manifest.assembly.priority = 200
     django.manifest.assembly.priority = 10
+    integration.manifest.assembly.priority = 5
 
     ordered_keys = [
         module.key
         for module in project.ordered_modules()
     ]
 
-    assert ordered_keys == ["postgres", "django"]
+    assert ordered_keys == [
+        "postgres",
+        "django",
+        "django-postgres",
+    ]

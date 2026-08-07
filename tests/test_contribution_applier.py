@@ -5,6 +5,7 @@ from boilr_generator.core import (
 )
 from boilr_generator.exceptions import (
     ContributionConflictError,
+    InvalidContributionError,
 )
 from boilr_generator.resolver.contribution_applier import (
     ContributionApplier,
@@ -16,6 +17,7 @@ def make_extension_point(
     value_type="list",
     merge_strategy="append_unique",
     default=None,
+    required=False,
 ):
     return ExtensionPoint(
         module_key="django",
@@ -23,6 +25,7 @@ def make_extension_point(
         value_type=value_type,
         merge_strategy=merge_strategy,
         default=default,
+        required=required,
     )
 
 
@@ -257,4 +260,30 @@ def test_applier_rejects_deep_merge_conflicts():
     )
     assert error.context["conflicting_contributor"] == (
         "module_b"
+    )
+
+def test_applier_rejects_missing_required_contribution():
+    extension_point = make_extension_point(
+        value_type="string",
+        merge_strategy="replace",
+        required=True,
+    )
+
+    with pytest.raises(
+        InvalidContributionError
+    ) as error_info:
+        ContributionApplier().apply(
+            [extension_point],
+            [],
+        )
+
+    error = error_info.value
+
+    assert error.code == "invalid_contribution"
+    assert error.module_key == "django"
+    assert error.context["reason"] == (
+        "missing_required_contribution"
+    )
+    assert error.context["extension_point"] == (
+        "example.point"
     )

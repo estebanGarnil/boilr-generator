@@ -13,6 +13,7 @@ class ExtensionPoint(BaseModel):
     value_type: str = Field(min_length=1)
     merge_strategy: str = Field(min_length=1)
     default: Any = None
+    required: bool = False
 
 
 class Contribution(BaseModel):

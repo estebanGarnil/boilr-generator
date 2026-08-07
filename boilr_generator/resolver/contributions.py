@@ -46,6 +46,7 @@ class ContributionCollector:
                         value_type=definition.type,
                         merge_strategy=definition.merge,
                         default=deepcopy(definition.default),
+                        required=definition.required,
                     )
                 )
 

@@ -8,7 +8,10 @@ DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() in ("true", "1", "yes")
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+    for host in os.getenv(
+        "DJANGO_ALLOWED_HOSTS",
+        "127.0.0.1,localhost",
+    ).split(",")
     if host.strip()
 ]
 
@@ -39,14 +42,25 @@ ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
-        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "BACKEND": (
+            "django.template.backends.django.DjangoTemplates"
+        ),
         "DIRS": [],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
-                "django.template.context_processors.request",
-                "django.contrib.auth.context_processors.auth",
-                "django.contrib.messages.context_processors.messages",
+                (
+                    "django.template.context_processors."
+                    "request"
+                ),
+                (
+                    "django.contrib.auth.context_processors."
+                    "auth"
+                ),
+                (
+                    "django.contrib.messages."
+                    "context_processors.messages"
+                ),
             ],
         },
     },
@@ -56,30 +70,19 @@ WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
 {% set database = bindings.primary_database %}
-{% if database.engine in ["postgres", "postgresql"] %}
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "{{ extensions['database.backend'] }}",
         "NAME": os.getenv("DB_NAME", "{{ database.name }}"),
         "USER": os.getenv("DB_USER", "{{ database.user }}"),
-        "PASSWORD": os.getenv("DB_PASSWORD", "{{ database.password }}"),
+        "PASSWORD": os.getenv(
+            "DB_PASSWORD",
+            "{{ database.password }}",
+        ),
         "HOST": os.getenv("DB_HOST", "{{ database.host }}"),
         "PORT": os.getenv("DB_PORT", "{{ database.port }}"),
     }
 }
-{% elif database.engine == "mysql" %}
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("DB_NAME", "{{ database.name }}"),
-        "USER": os.getenv("DB_USER", "{{ database.user }}"),
-        "PASSWORD": os.getenv("DB_PASSWORD", "{{ database.password }}"),
-        "HOST": os.getenv("DB_HOST", "{{ database.host }}"),
-        "PORT": os.getenv("DB_PORT", "{{ database.port }}"),
-    }
-}
-{% endif %}
-
 
 LANGUAGE_CODE = "fr-fr"
 TIME_ZONE = "Europe/Paris"

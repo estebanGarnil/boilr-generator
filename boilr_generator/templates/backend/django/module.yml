@@ -73,6 +73,11 @@ extension_points:
     merge: append_unique
     default: []
 
+  database.backend:
+    type: string
+    merge: replace
+    required: true
+
 variables:
   project_name:
     type: string

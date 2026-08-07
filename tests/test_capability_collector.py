@@ -17,7 +17,14 @@ def configure_capability_contracts(project):
     assert postgres is not None
     assert django is not None
 
+    project.modules = [
+        postgres,
+        django,
+    ]
+
     django.manifest.provides = []
+    django.manifest.extension_points = {}
+    django.manifest.contributions = []
 
     postgres.manifest.provides = [
         ProvidedCapability(

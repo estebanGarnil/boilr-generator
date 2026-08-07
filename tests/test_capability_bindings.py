@@ -181,6 +181,11 @@ def test_resolver_stores_created_bindings(
         "collect_requirements",
         lambda _: [requirement],
     )
+    monkeypatch.setattr(
+        resolver.contribution_applier,
+        "apply",
+        lambda *_: [],
+    )
 
     result = resolver.resolve(manifest)
 
@@ -205,14 +210,39 @@ def test_builtin_django_uses_postgres_binding(
 
     assert len(database_providers) == 1
     assert database_providers[0].module_key == "postgres"
-    assert len(resolved_project.requirements) == 1
-    assert len(resolved_project.bindings) == 1
 
-    binding = resolved_project.bindings[0]
+    django_requirements = [
+        requirement
+        for requirement in resolved_project.requirements
+        if requirement.module_key == "django"
+    ]
+
+    django_bindings = (
+        resolved_project.bindings_for_consumer("django")
+    )
+
+    assert len(django_requirements) == 1
+    assert len(django_bindings) == 1
+
+    requirement = django_requirements[0]
+    binding = django_bindings[0]
+
+    assert requirement.binding_key == "primary_database"
+    assert requirement.capability == "database.connection"
+    assert requirement.contract == {
+        "engine": "string",
+        "host": "string",
+        "port": "int",
+        "name": "string",
+        "user": "string",
+        "password": "string",
+        "service": "string",
+    }
 
     assert binding.consumer_module_key == "django"
     assert binding.provider_module_key == "postgres"
     assert binding.binding_key == "primary_database"
+    assert binding.capability == "database.connection"
     assert binding.values == {
         "engine": "postgresql",
         "host": "db",
@@ -235,16 +265,6 @@ def test_builtin_django_uses_postgres_binding(
     assert duplicated_variables.isdisjoint(
         django.variables
     )
-
-    assert resolved_project.requirements[0].contract == {
-        "engine": "string",
-        "host": "string",
-        "port": "int",
-        "name": "string",
-        "user": "string",
-        "password": "string",
-        "service": "string",
-    }
 
 def test_binder_rejects_missing_contract_field():
     provider = make_provider("postgres")

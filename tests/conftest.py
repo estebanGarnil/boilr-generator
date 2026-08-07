@@ -41,7 +41,10 @@ def valid_manifest_data() -> dict:
                     "project_name": "my_app",
                     "secret_key": "dev-secret",
                     "django_settings_module": "config.settings",
-                    "allowed_hosts": ["localhost", "127.0.0.1"],
+                    "allowed_hosts": [
+                        "localhost",
+                        "127.0.0.1",
+                    ],
                     "backend_port": 8000,
                     "debug": True,
                 },
@@ -49,6 +52,9 @@ def valid_manifest_data() -> dict:
                     "rest_framework": True,
                     "cors": True,
                 },
+            },
+            {
+                "key": "django-postgres",
             },
         ],
     }

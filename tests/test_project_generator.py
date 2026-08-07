@@ -59,8 +59,11 @@ def test_project_generator_returns_resolved_project(tmp_path, registry, manifest
     )
 
     assert resolved_project.project.name == "my_app"
-    assert resolved_project.list_module_keys() == ["postgres", "django"]
-
+    assert resolved_project.list_module_keys() == [
+        "postgres",
+        "django",
+        "django-postgres",
+    ]
 
 def test_project_generator_clean_removes_existing_files(tmp_path, registry, manifest):
     output_path = tmp_path / "my_app"

@@ -27,8 +27,11 @@ def test_resolver_orders_modules_by_dependency_graph(
         for module in resolved_project.ordered_modules()
     ]
 
-    assert ordered_keys == ["postgres", "django"]
-
+    assert ordered_keys == [
+        "postgres",
+        "django",
+        "django-postgres",
+    ]
 
 def test_resolver_raises_when_required_database_is_missing(
     registry,

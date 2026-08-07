@@ -26,6 +26,15 @@ def configure_contribution(
     assert postgres is not None
     assert django is not None
 
+    project.modules = [
+        django,
+    ]
+
+    project.modules = [
+        postgres,
+        django,
+    ]
+
     django.manifest.extension_points = {}
 
     postgres.manifest.extension_points = {
@@ -127,6 +136,11 @@ def test_collector_skips_contribution_without_optional_binding(
 
     assert django is not None
 
+    project.modules = [
+        django,
+    ]
+    project.bindings = []
+
     django.manifest.requires.append(
         RequiredCapability.model_validate(
             {
@@ -160,7 +174,6 @@ def test_collector_skips_contribution_without_optional_binding(
     )
 
     assert contributions == []
-
 
 def test_collector_rejects_unknown_extension_point(
     resolved_project,

@@ -10,6 +10,7 @@ from boilr_generator.core.contributions import (
 )
 from boilr_generator.exceptions import (
     ContributionConflictError,
+    InvalidContributionError,
 )
 
 
@@ -36,6 +37,14 @@ class ContributionApplier:
                 )
             ]
 
+            if (
+                extension_point.required
+                and not matching_contributions
+            ):
+                self._raise_missing_required_contribution(
+                    extension_point
+                )
+
             value, contributors = self._apply_extension_point(
                 extension_point,
                 matching_contributions,
@@ -51,6 +60,37 @@ class ContributionApplier:
             )
 
         return values
+
+    def _raise_missing_required_contribution(
+        self,
+        extension_point: ExtensionPoint,
+    ) -> None:
+        """Reject a required extension point without contribution."""
+        raise InvalidContributionError(
+            (
+                f"Required extension point "
+                f"'{extension_point.key}' exposed by module "
+                f"'{extension_point.module_key}' received no "
+                "contribution."
+            ),
+            module_key=extension_point.module_key,
+            field_path=(
+                f"modules.{extension_point.module_key}."
+                f"extension_points.{extension_point.key}"
+            ),
+            context={
+                "reason": "missing_required_contribution",
+                "target_module": extension_point.module_key,
+                "extension_point": extension_point.key,
+                "merge_strategy": (
+                    extension_point.merge_strategy
+                ),
+            },
+            suggestion=(
+                "Add a module contributing to this required "
+                "extension point."
+            ),
+        )
 
     def _apply_extension_point(
         self,
