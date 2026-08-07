@@ -13,6 +13,7 @@ from boilr_generator.core.capabilities import (
 from boilr_generator.core.contributions import (
     Contribution,
     ExtensionPoint,
+    ExtensionPointValue,
 )
 from boilr_generator.core.dependencies import DependencyGraph
 from boilr_generator.core.module import ResolvedModule
@@ -42,6 +43,9 @@ class ResolvedProject(BaseModel):
     contributions: list[Contribution] = Field(
         default_factory=list
     )
+    extension_point_values: list[
+        ExtensionPointValue
+    ] = Field(default_factory=list)
 
     def get_module(
         self,
@@ -220,3 +224,33 @@ class ResolvedProject(BaseModel):
                 ]
 
         return context
+
+    def extension_value_for(
+        self,
+        module_key: str,
+        extension_point: str,
+    ) -> ExtensionPointValue | None:
+        """Return the final value of one extension point."""
+        return next(
+            (
+                value
+                for value in self.extension_point_values
+                if (
+                    value.module_key == module_key
+                    and value.extension_point
+                    == extension_point
+                )
+            ),
+            None,
+        )
+
+    def extension_context_for(
+        self,
+        module_key: str,
+    ) -> dict[str, Any]:
+        """Build the template extension context for one module."""
+        return {
+            value.extension_point: deepcopy(value.value)
+            for value in self.extension_point_values
+            if value.module_key == module_key
+        }

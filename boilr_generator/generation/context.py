@@ -19,4 +19,5 @@ def build_module_context(
             module.manifest.dependencies
         ),
         "bindings": project.binding_context_for(module.key),
+        "extensions": project.extension_context_for(module.key),
     }

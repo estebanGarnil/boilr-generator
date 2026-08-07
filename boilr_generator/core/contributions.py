@@ -23,3 +23,13 @@ class Contribution(BaseModel):
     target_binding: str = Field(min_length=1)
     extension_point: str = Field(min_length=1)
     value: Any
+
+class ExtensionPointValue(BaseModel):
+    """Final value produced for one extension point."""
+
+    module_key: str = Field(min_length=1)
+    extension_point: str = Field(min_length=1)
+    value: Any
+    contributor_module_keys: list[str] = Field(
+        default_factory=list
+    )

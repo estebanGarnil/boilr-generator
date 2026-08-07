@@ -280,3 +280,18 @@ def test_resolver_stores_collected_contributions(
     assert contributions[0].value == {
         "pool_size": 10,
     }
+
+    assert len(result.extension_point_values) == 1
+
+    extension_value = result.extension_value_for(
+        "postgres",
+        "database.options",
+    )
+
+    assert extension_value is not None
+    assert extension_value.value == {
+        "pool_size": 10,
+    }
+    assert extension_value.contributor_module_keys == [
+        "django"
+    ]

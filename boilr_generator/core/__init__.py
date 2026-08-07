@@ -8,6 +8,7 @@ from boilr_generator.core.capabilities import (
 from boilr_generator.core.contributions import (
     Contribution,
     ExtensionPoint,
+    ExtensionPointValue,
 )
 from boilr_generator.core.dependencies import (
     DependencyEdge,
@@ -26,4 +27,5 @@ __all__ = [
     "DependencyGraph",
     "Contribution",
     "ExtensionPoint",
+    "ExtensionPointValue",
 ]

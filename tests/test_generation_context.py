@@ -1,6 +1,7 @@
 from boilr_generator.core import (
     CapabilityBinding,
     CapabilityRequirement,
+    ExtensionPointValue,
 )
 from boilr_generator.generation.context import (
     build_module_context,
@@ -209,3 +210,44 @@ def test_file_generator_can_render_binding_values(
     assert (
         output_path / "binding.txt"
     ).read_text(encoding="utf-8") == "db"
+
+def test_module_context_contains_extension_values(
+    resolved_project,
+):
+    project = resolved_project.model_copy(deep=True)
+
+    django = project.get_module("django")
+
+    assert django is not None
+
+    project.extension_point_values = [
+        ExtensionPointValue(
+            module_key="django",
+            extension_point="python.dependencies",
+            value=[
+                "psycopg[binary]",
+            ],
+            contributor_module_keys=[
+                "django_postgres",
+            ],
+        )
+    ]
+
+    context = build_module_context(
+        project,
+        django,
+    )
+
+    assert context["extensions"] == {
+        "python.dependencies": [
+            "psycopg[binary]",
+        ]
+    }
+
+    context["extensions"][
+        "python.dependencies"
+    ].append("changed")
+
+    assert project.extension_point_values[0].value == [
+        "psycopg[binary]"
+    ]
