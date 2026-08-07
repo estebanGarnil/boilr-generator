@@ -105,35 +105,37 @@ Boilr was born from a simple idea:
 
 instead of maintaining reusable projects, maintain reusable modules that can be assembled together to create complete Dockerized application stacks.
 
-
-
 ## Architecture
 
 ```text
 project.yml
-        ↓
+    ->
 ProjectManifest
-        ↓
-Validation
-        ↓
+    ->
 ModuleRegistry
-        ↓
+    ->
 Resolver
-        ↓
+    |- capability providers
+    |- capability requirements
+    |- typed bindings
+    |- dependency graph
+    |- extension points
+    `- contributions
+    ->
 ResolvedProject
-        ↓
+    ->
 GenerationPlan
-        ↓
-ProjectGenerator
-        ↓
+    ->
+ProjectGenerator.execute(plan)
+    ->
 Generated Project
 ```
 
+The resolver is declarative: modules describe what they provide, what they consume, and how they contribute to other modules. Technology-specific decisions belong in integration modules rather than in the core engine.
+
 ### Manifest
 
-Defines the desired project.
-
-Example:
+A project manifest selects modules and supplies their variables and options.
 
 ```yaml
 project:
@@ -143,61 +145,193 @@ project:
 
 modules:
   - key: postgres
+    variables:
+      db_name: my_app
+      db_user: my_app
+      db_password: password
 
   - key: django
-```
+    variables:
+      project_name: my_app
+      secret_key: dev-secret
 
----
+    options:
+      rest_framework: true
+      cors: true
+
+  - key: django-postgres
+```
 
 ### Validation
 
 Before generation, Boilr validates:
 
-* module existence
-* required variables
-* variable types
-* unknown variables
-* module compatibility
-* module requirements
+- requested module existence;
+- required variables and their types;
+- option types;
+- capability contracts;
+- missing or ambiguous capability providers;
+- dependency cycles;
+- contribution targets and value types;
+- extension-point merge conflicts;
+- generated file conflicts;
+- copy strategies and planned removal safety.
 
----
+### Capabilities and bindings
 
-### Resolver
+Modules communicate through typed capabilities.
 
-The resolver builds the final project structure.
+A provider exposes a capability and its values:
 
-Responsibilities:
+```yaml
+provides:
+  - capability: database.connection
+    values:
+      engine: postgresql
+      host: db
+      port: "{{ db_port }}"
+      name: "{{ db_name }}"
+      user: "{{ db_user }}"
+      password: "{{ db_password }}"
+      service: db
+```
 
-* dependency resolution
-* compatibility checks
-* module ordering
-* variable aggregation
+A consumer declares the capability it needs:
 
----
+```yaml
+requires:
+  - capability: database.connection
+    binding: primary_database
+    optional: false
+    unique: true
+    contract:
+      engine: string
+      host: string
+      port: int
+      name: string
+      user: string
+      password: string
+      service: string
+```
+
+The resolver matches providers to consumers and creates typed bindings. Templates can access them through Jinja:
+
+```jinja
+{{ bindings.primary_database.host }}
+{{ bindings.primary_database.port }}
+{{ bindings.primary_database.service }}
+```
+
+When `unique` is `false`, the binding contains a list of matching provider values.
+
+### Extension points and contributions
+
+A module can expose typed extension points:
+
+```yaml
+extension_points:
+  python.dependencies:
+    type: list
+    merge: append_unique
+    default: []
+
+  database.backend:
+    type: string
+    merge: replace
+    required: true
+```
+
+Integration modules contribute through one of their declared bindings:
+
+```yaml
+contributions:
+  - target: backend
+    extension_point: python.dependencies
+    value:
+      - psycopg[binary]
+
+  - target: backend
+    extension_point: database.backend
+    value: django.db.backends.postgresql
+```
+
+Contribution values can use the contributor's variables, options, and bindings. Rendering uses native Jinja values, so integers, booleans, lists, and dictionaries keep their types.
+
+Supported extension-point merge strategies are:
+
+- scalar values: `replace`;
+- lists: `replace`, `append`, `append_unique`;
+- dictionaries: `replace`, `deep_merge`.
+
+Required extension points must receive at least one contribution.
+
+### Dependency graph
+
+Capability bindings create dependency edges between modules. Boilr uses this graph to:
+
+- order modules deterministically;
+- ensure providers are assembled before consumers;
+- place integration modules after the modules they connect;
+- reject dependency cycles.
 
 ### Generation Plan
 
-Before generating files, Boilr can produce a complete generation plan.
+Before writing anything, Boilr creates a complete and inspectable `GenerationPlan`.
 
-The plan includes:
+The plan contains:
 
-* files to create
-* files to overwrite
-* generated Docker services
-* generated environment variables
+- the resolved project;
+- every destination path;
+- final file contents as bytes;
+- create, overwrite, or skip actions;
+- SHA-256 fingerprints and content sizes;
+- Docker services and environment-variable names;
+- planned removals;
+- the `clean_output` decision.
 
-This enables dry-run previews and future frontend integrations.
+Planning performs template rendering, Docker generation, environment generation, collision detection, and copy-strategy resolution.
 
----
+`execute(plan)` applies only the prepared plan. It does not resolve modules or regenerate file contents. This guarantees that a successful preview represents the execution that follows.
+
+Use `--info` to display the plan:
+
+```powershell
+python -m boilr_generator.cli generate `
+    project.yml `
+    generated-project `
+    --info
+```
+
+### Copy strategies
+
+Copy sources support three strategies:
+
+- `merge`: combine the source tree with the destination. Source files overwrite files at the same paths, while unrelated destination files remain;
+- `skip`: if the destination exists, leave the complete destination unchanged;
+- `replace`: plan removal of the destination, then create it again from the source.
+
+Example:
+
+```yaml
+sources:
+  copy:
+    - from: files/apps
+      to: backend/apps
+      strategy: merge
+```
+
+Planned removals are restricted to paths strictly inside the project output directory.
 
 ### Generation
 
-The generator executes the plan and creates:
+The generator applies the plan and creates:
 
-* project files
-* Docker Compose configuration
-* environment variables
-* rendered templates
+- copied module files;
+- rendered templates;
+- Docker Compose configuration;
+- the project `.env` file.
+
+With `--clean`, output cleanup becomes part of the plan and all resulting files are planned as creations.
 
 ---
 
@@ -208,44 +342,64 @@ The generator executes the plan and creates:
 ```yaml
 project:
   name: blog
+  type: fullstack_web
+  version: "1.0.0"
 
 modules:
   - key: postgres
+    variables:
+      db_name: blog
+      db_user: blog
+      db_password: password
 
   - key: django
+    variables:
+      project_name: blog
+      secret_key: dev-secret
+
+  - key: django-postgres
 ```
 
 ### Output
 
 ```text
 blog/
-├── backend/
-│   ├── manage.py
-│   ├── requirements.txt
-│   └── config/
-│
-├── docker-compose.yml
-├── .env
-└── README.md
+|-- backend/
+|   |-- apps/
+|   |-- config/
+|   |-- Dockerfile
+|   |-- manage.py
+|   `-- requirements.txt
+|-- docker-compose.yml
+`-- .env
 ```
+
+The Django/PostgreSQL integration contributes:
+
+- `psycopg[binary]` to `backend/requirements.txt`;
+- `django.db.backends.postgresql` to Django settings.
 
 ---
 
 ## Features
 
-* Modular architecture
-* YAML / JSON manifests
-* Docker-first project generation
-* Docker Compose generation
-* Environment generation
-* Validation system
-* Dependency resolution
-* Compatibility checks
-* Dry-run support
-* Template rendering
-* Fully tested
-
-
+- Declarative modular architecture
+- YAML and JSON project manifests
+- Typed capability providers and requirements
+- Automatic capability bindings
+- Deterministic dependency graph
+- Cycle detection
+- Typed extension points and contributions
+- Dynamic native-Jinja contributions
+- Explicit contribution conflict detection
+- Complete deterministic generation plans
+- Dry-run plan previews
+- Safe copy strategies
+- Docker Compose generation
+- Environment generation
+- Strict template rendering
+- Structured diagnostics
+- Fully tested core engine
 
 ---
 
@@ -253,16 +407,15 @@ blog/
 
 ### Backend
 
-* Django
+- Django
 
 ### Database
 
-* PostgreSQL
-* MySQL
+- PostgreSQL
 
-### Cache
+### Integrations
 
-* Redis
+- Django + PostgreSQL
 
 More modules are planned.
 
@@ -270,44 +423,52 @@ More modules are planned.
 
 ## Project Status
 
-Boilr is currently under active development.
+Boilr is under active development.
 
-The core generation engine is functional, tested and already capable of generating complete Dockerized application stacks.
+The core engine can resolve declarative module contracts, assemble integration contributions, build deterministic generation plans, and generate a complete Dockerized Django/PostgreSQL project.
 
-Current focus areas:
+The public exception compatibility exports are temporarily preserved to avoid breaking existing imports. New code should import canonical exceptions from:
 
-- Django API
-- CLI
-- Module ecosystem growth
-- Frontend interface
+```python
+from boilr_generator.exceptions import BoilrError
+```
 
+---
 
 ## Roadmap
 
 ### Core Engine
 
-* [x] Manifest system
-* [x] Module registry
-* [x] Validation system
-* [x] Resolver
-* [x] Generation plan
-* [x] Project generation
+- [x] Manifest system
+- [x] Module registry
+- [x] Typed capabilities
+- [x] Capability bindings
+- [x] Dependency graph and cycle detection
+- [x] Typed extension points
+- [x] Dynamic contributions
+- [x] Deterministic generation plan
+- [x] Safe copy strategies
+- [x] Project generation
+- [x] CLI
 
 ### Platform
 
-* [ ] Django API
-* [ ] CLI
-* [ ] Web Interface
-* [ ] Module marketplace
+- [ ] Django API
+- [ ] Web interface
+- [ ] Module marketplace
 
 ### Ecosystem
 
 - [ ] React module
 - [ ] Vue module
 - [ ] FastAPI module
+- [ ] MySQL integration
 - [ ] MongoDB module
+- [ ] Redis module
 - [ ] RabbitMQ module
+
 ---
+
 
 ## Contributing
 
