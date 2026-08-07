@@ -10,6 +10,10 @@ from boilr_generator.core.capabilities import (
     CapabilityProvider,
     CapabilityRequirement,
 )
+from boilr_generator.core.contributions import (
+    Contribution,
+    ExtensionPoint,
+)
 from boilr_generator.core.dependencies import DependencyGraph
 from boilr_generator.core.module import ResolvedModule
 from boilr_generator.manifest.schemas import ProjectInfo
@@ -31,6 +35,12 @@ class ResolvedProject(BaseModel):
     )
     dependency_graph: DependencyGraph = Field(
         default_factory=DependencyGraph
+    )
+    extension_points: list[ExtensionPoint] = Field(
+        default_factory=list
+    )
+    contributions: list[Contribution] = Field(
+        default_factory=list
     )
 
     def get_module(
@@ -88,6 +98,43 @@ class ResolvedProject(BaseModel):
             self.modules,
             key=lambda module: module.priority,
         )
+
+    def extension_point_for(
+        self,
+        module_key: str,
+        key: str,
+    ) -> ExtensionPoint | None:
+        """Return one extension point exposed by a module."""
+        return next(
+            (
+                extension_point
+                for extension_point in self.extension_points
+                if (
+                    extension_point.module_key == module_key
+                    and extension_point.key == key
+                )
+            ),
+            None,
+        )
+
+    def contributions_for_target(
+        self,
+        module_key: str,
+        extension_point: str | None = None,
+    ) -> list[Contribution]:
+        """Return contributions targeting one module."""
+        return [
+            contribution
+            for contribution in self.contributions
+            if (
+                contribution.target_module_key == module_key
+                and (
+                    extension_point is None
+                    or contribution.extension_point
+                    == extension_point
+                )
+            )
+        ]
 
     def providers_for(
         self,

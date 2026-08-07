@@ -5,6 +5,10 @@ from boilr_generator.core.capabilities import (
     CapabilityProvider,
     CapabilityRequirement,
 )
+from boilr_generator.core.contributions import (
+    Contribution,
+    ExtensionPoint,
+)
 from boilr_generator.core.dependencies import (
     DependencyEdge,
     DependencyGraph,
@@ -20,4 +24,6 @@ __all__ = [
     "ResolvedProject",
     "DependencyEdge",
     "DependencyGraph",
+    "Contribution",
+    "ExtensionPoint",
 ]
