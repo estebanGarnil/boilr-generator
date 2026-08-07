@@ -1,7 +1,5 @@
-import yaml
 import pytest
-from pydantic import ValidationError
-
+import yaml
 from boilr_generator.exceptions import (
     ManifestNotFoundError,
     ManifestParseError,
@@ -17,6 +15,7 @@ from boilr_generator.modules import (
     load_module_from_dict,
     load_module_from_yaml,
 )
+from pydantic import ValidationError
 
 
 def test_missing_manifest_raises_contextual_error(tmp_path):
