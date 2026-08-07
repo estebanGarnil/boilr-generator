@@ -178,9 +178,24 @@ def test_generation_plan_can_be_serialized(
 
     data = plan.to_dict()
 
-    assert data["summary"]["files_count"] == len(plan.files)
-    assert isinstance(data["files"], list)
-    assert data["files"][0]["relative_destination_path"]
+    serialized_files = {
+        file["relative_destination_path"]: file
+        for file in data["files"]
+    }
+
+    docker_file = serialized_files[
+        "docker-compose.yml"
+    ]
+    env_file = serialized_files[".env"]
+
+    assert "content" not in docker_file
+    assert "content" not in env_file
+    assert docker_file["content_size"] > 0
+    assert env_file["content_size"] > 0
+    assert len(docker_file["content_sha256"]) == 64
+    assert len(env_file["content_sha256"]) == 64
+    assert data["summary"]["content_bytes"] > 0
+    assert data["clean_output"] is False
 
 def test_project_generator_plan_reports_missing_template(
     registry,
@@ -274,3 +289,149 @@ def test_project_generator_plan_rejects_file_conflicts(
     assert error.context["first_operation"] == "render"
     assert error.context["conflicting_operation"] == "render"
     assert error.suggestion is not None
+
+def test_project_generator_plan_prepares_generated_files(
+    registry,
+    manifest,
+    tmp_path,
+):
+    plan = ProjectGenerator(registry).plan(
+        manifest,
+        tmp_path,
+    )
+
+    planned_files = {
+        file.relative_destination_path: file
+        for file in plan.files
+    }
+
+    docker_file = planned_files[
+        "docker-compose.yml"
+    ]
+    env_file = planned_files[".env"]
+
+    assert b"services:" in docker_file.content
+    assert b"DB_NAME=my_app" in env_file.content
+    assert docker_file.content_size > 0
+    assert env_file.content_size > 0
+
+def test_project_generator_plan_prepares_module_files(
+    registry,
+    manifest,
+    tmp_path,
+):
+    plan = ProjectGenerator(registry).plan(
+        manifest,
+        tmp_path,
+    )
+
+    copied_files = [
+        file
+        for file in plan.files
+        if file.operation == "copy"
+    ]
+    rendered_files = [
+        file
+        for file in plan.files
+        if file.operation == "render"
+    ]
+
+    assert copied_files
+    assert rendered_files
+
+    for planned_file in copied_files:
+        assert planned_file.source_path is not None
+        assert planned_file.content == (
+            planned_file.source_path.read_bytes()
+        )
+        assert planned_file.mode is not None
+
+    for planned_file in rendered_files:
+        assert planned_file.source_path is not None
+        assert planned_file.content_size > 0
+        assert isinstance(
+            planned_file.content,
+            bytes,
+        )
+
+def test_project_generator_execute_uses_plan_only(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(manifest, tmp_path)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError(
+            "Execution must not recalculate outputs."
+        )
+
+    monkeypatch.setattr(
+        generator.file_generator,
+        "copy_sources",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        generator.file_generator,
+        "render_sources",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        generator.docker_generator,
+        "generate",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        generator.env_generator,
+        "generate",
+        fail_if_called,
+    )
+
+    generator.execute(plan)
+
+    for planned_file in plan.files:
+        if planned_file.action == "skip":
+            continue
+
+        assert (
+            planned_file.destination_path.read_bytes()
+            == planned_file.content
+        )
+
+
+def test_project_generator_clean_is_planned(
+    registry,
+    manifest,
+    tmp_path,
+):
+    old_file = tmp_path / "old.txt"
+    tmp_path.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    old_file.write_text(
+        "old",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
+        manifest,
+        tmp_path,
+        clean=True,
+    )
+
+    assert plan.clean_output is True
+    assert all(
+        file.action == "create"
+        for file in plan.files
+    )
+
+    generator.execute(plan)
+
+    assert old_file.exists() is False
+    assert (
+        tmp_path / "docker-compose.yml"
+    ).exists()

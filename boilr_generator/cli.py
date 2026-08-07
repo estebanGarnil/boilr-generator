@@ -416,6 +416,7 @@ def generate(
         plan = generator.plan(
             manifest,
             output_path,
+            clean=clean,
         )
         plan_dict = plan.to_dict()
 
@@ -430,10 +431,7 @@ def generate(
             console.print()
             render_files_tree(plan_dict["files"])
 
-        generator.execute(
-            plan,
-            clean=clean,
-        )
+        generator.execute(plan)
 
         console.print()
         console.print(

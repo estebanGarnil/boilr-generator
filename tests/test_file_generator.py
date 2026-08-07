@@ -107,3 +107,29 @@ def test_file_generator_reports_template_render_error(
         destination_path
     )
     assert destination_path.exists() is False
+
+def test_file_generator_prepares_template_without_writing(
+    tmp_path: Path,
+):
+    template_path = tmp_path / "example.txt.j2"
+    destination_path = tmp_path / "output" / "example.txt"
+
+    template_path.write_text(
+        "Hello {{ name }}",
+        encoding="utf-8",
+    )
+
+    content = FileGenerator().render_template_content(
+        template_path=template_path,
+        destination_path=destination_path,
+        context={
+            "name": "Boilr",
+        },
+        module_key="django",
+        field_path=(
+            "modules.django.sources.render[0].from"
+        ),
+    )
+
+    assert content == "Hello Boilr"
+    assert destination_path.exists() is False

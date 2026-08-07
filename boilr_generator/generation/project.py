@@ -15,6 +15,9 @@ from boilr_generator.exceptions import (
     FileConflictError,
     SourceNotFoundError,
 )
+from boilr_generator.generation.context import (
+    build_module_context,
+)
 from boilr_generator.generation.docker import DockerComposeGenerator
 from boilr_generator.generation.env import EnvGenerator
 from boilr_generator.generation.files import FileGenerator
@@ -41,8 +44,12 @@ class ProjectGenerator:
         clean: bool = False,
     ) -> ResolvedProject:
         """Resolve, plan and execute a project generation."""
-        plan = self.plan(manifest, output_path)
-        self.execute(plan, clean=clean)
+        plan = self.plan(
+            manifest,
+            output_path,
+            clean=clean,
+        )
+        self.execute(plan)
 
         return plan.resolved_project
 
@@ -50,6 +57,7 @@ class ProjectGenerator:
         self,
         manifest: ProjectManifest,
         output_path: str | Path,
+        clean: bool = False,
     ) -> GenerationPlan:
         """Create a generation plan without writing files."""
         output_path = Path(output_path)
@@ -60,6 +68,11 @@ class ProjectGenerator:
         for module in resolved_project.ordered_modules():
             module_key = module.manifest.meta.key
             module_path = self.registry.get_path(module_key)
+
+            render_context = build_module_context(
+                resolved_project,
+                module,
+            )
 
             for index, source in enumerate(
                 module.manifest.sources.copy_sources
@@ -90,28 +103,37 @@ class ProjectGenerator:
                             f"modules.{module_key}.sources."
                             f"render[{index}].from"
                         ),
+                        context=render_context,
                     )
                 )
+
+        docker_compose = self.docker_generator.generate(
+            resolved_project
+        )
+        env = self.env_generator.generate(resolved_project)
 
         files.append(
             self._plan_generated_file(
                 relative_path="docker-compose.yml",
                 output_path=output_path,
+                content=self._serialize_yaml(
+                    docker_compose
+                ),
             )
         )
         files.append(
             self._plan_generated_file(
                 relative_path=".env",
                 output_path=output_path,
+                content=self._serialize_env(env),
             )
         )
 
-        self._validate_file_conflicts(files)
+        if clean:
+            for planned_file in files:
+                planned_file.action = "create"
 
-        docker_compose = self.docker_generator.generate(
-            resolved_project
-        )
-        env = self.env_generator.generate(resolved_project)
+        self._validate_file_conflicts(files)
 
         return GenerationPlan(
             resolved_project=resolved_project,
@@ -121,62 +143,62 @@ class ProjectGenerator:
                 docker_compose.get("services", {}).keys()
             ),
             env_variables=list(env.keys()),
+            clean_output=clean,
         )
 
     def execute(
         self,
         plan: GenerationPlan,
-        clean: bool = False,
     ) -> None:
-        """Execute a previously prepared generation plan."""
+        """Apply a complete plan without recalculating outputs."""
         self._validate_file_conflicts(plan.files)
 
         output_path = plan.output_path
 
-        if clean and output_path.exists():
+        if plan.clean_output and output_path.exists():
             shutil.rmtree(output_path)
 
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        resolved_project = plan.resolved_project
-
-        self.file_generator.copy_sources(
-            resolved_project,
-            output_path,
-        )
-        self.file_generator.render_sources(
-            resolved_project,
-            output_path,
+        output_path.mkdir(
+            parents=True,
+            exist_ok=True,
         )
 
-        self._write_docker_compose(
-            resolved_project,
-            output_path,
-        )
-        self._write_env_file(
-            resolved_project,
-            output_path,
-        )
+        for planned_file in plan.files:
+            if planned_file.action == "skip":
+                continue
 
-    def _write_docker_compose(
+            destination_path = (
+                planned_file.destination_path
+            )
+            destination_path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            destination_path.write_bytes(
+                planned_file.content
+            )
+
+            if planned_file.mode is not None:
+                destination_path.chmod(
+                    planned_file.mode
+                )
+
+    def _serialize_yaml(
         self,
-        project: ResolvedProject,
-        output_path: Path,
-    ) -> None:
-        compose = self.docker_generator.generate(project)
+        data: dict[str, Any],
+    ) -> bytes:
+        """Serialize generated YAML into stable UTF-8 bytes."""
+        return yaml.safe_dump(
+            data,
+            sort_keys=False,
+            allow_unicode=True,
+        ).encode("utf-8")
 
-        self._write_yaml(
-            path=output_path / "docker-compose.yml",
-            data=compose,
-        )
-
-    def _write_env_file(
+    def _serialize_env(
         self,
-        project: ResolvedProject,
-        output_path: Path,
-    ) -> None:
-        env = self.env_generator.generate(project)
-
+        env: dict[str, Any],
+    ) -> bytes:
+        """Serialize environment variables into UTF-8 bytes."""
         lines = [
             f"{key}={value}"
             for key, value in env.items()
@@ -187,30 +209,13 @@ class ProjectGenerator:
         if content:
             content += "\n"
 
-        (output_path / ".env").write_text(
-            content,
-            encoding="utf-8",
-        )
-
-    def _write_yaml(
-        self,
-        path: Path,
-        data: dict[str, Any],
-    ) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        with path.open("w", encoding="utf-8") as file:
-            yaml.safe_dump(
-                data,
-                file,
-                sort_keys=False,
-                allow_unicode=True,
-            )
+        return content.encode("utf-8")
 
     def _plan_generated_file(
         self,
         relative_path: str,
         output_path: Path,
+        content: bytes,
     ) -> PlannedFile:
         destination_path = output_path / relative_path
 
@@ -221,6 +226,7 @@ class ProjectGenerator:
             operation="generate",
             module=None,
             strategy="overwrite",
+            content=content,
         )
 
     def _plan_render_source(
@@ -230,24 +236,20 @@ class ProjectGenerator:
         source: RenderSource,
         output_path: Path,
         field_path: str,
+        context: dict[str, Any],
     ) -> PlannedFile:
         source_path = module_path / source.from_
         destination_path = output_path / source.to
 
-        if not source_path.is_file():
-            raise SourceNotFoundError(
-                f"Template not found: {source_path}",
+        rendered_content = (
+            self.file_generator.render_template_content(
+                template_path=source_path,
+                destination_path=destination_path,
+                context=context,
                 module_key=module_key,
                 field_path=field_path,
-                context={
-                    "source_path": str(source_path),
-                    "source_kind": "template",
-                },
-                suggestion=(
-                    "Check the template path declared in the module "
-                    "manifest and ensure the template is packaged."
-                ),
             )
+        )
 
         return self._build_planned_file(
             source_path=source_path,
@@ -256,6 +258,7 @@ class ProjectGenerator:
             operation="render",
             module=module_key,
             strategy="overwrite",
+            content=rendered_content.encode("utf-8"),
         )
 
     def _plan_copy_source(
@@ -294,12 +297,19 @@ class ProjectGenerator:
                     operation="copy",
                     module=module_key,
                     strategy=source.strategy,
+                    content=source_path.read_bytes(),
+                    mode=(
+                        source_path.stat().st_mode
+                        & 0o777
+                    ),
                 )
             ]
 
         planned_files: list[PlannedFile] = []
 
-        for file_path in source_path.rglob("*"):
+        for file_path in sorted(
+            source_path.rglob("*")
+        ):
             if not file_path.is_file():
                 continue
 
@@ -316,6 +326,8 @@ class ProjectGenerator:
                     operation="copy",
                     module=module_key,
                     strategy=source.strategy,
+                    content=file_path.read_bytes(),
+                    mode=file_path.stat().st_mode & 0o777,
                 )
             )
 
@@ -329,6 +341,8 @@ class ProjectGenerator:
         operation: str,
         module: str | None,
         strategy: str,
+        content: bytes,
+        mode: int | None = None,
     ) -> PlannedFile:
         action = self._get_planned_action(
             destination_path=destination_path,
@@ -344,6 +358,8 @@ class ProjectGenerator:
             operation=operation,
             action=action,
             module=module,
+            content=content,
+            mode=mode,
         )
 
     def _get_planned_action(
