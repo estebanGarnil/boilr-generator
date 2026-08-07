@@ -133,3 +133,16 @@ def test_file_generator_prepares_template_without_writing(
 
     assert content == "Hello Boilr"
     assert destination_path.exists() is False
+
+def test_copy_source_rejects_unknown_strategy():
+    with pytest.raises(
+        ValueError,
+        match="Input should be 'merge', 'skip' or 'replace'",
+    ):
+        CopySource.model_validate(
+            {
+                "from": "files",
+                "to": "generated",
+                "strategy": "unknown",
+            }
+        )

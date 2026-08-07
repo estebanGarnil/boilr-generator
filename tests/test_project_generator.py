@@ -1,12 +1,18 @@
 
 import pytest
-from boilr_generator.core.generation_plan import GenerationPlan
+from boilr_generator.core.generation_plan import (
+    GenerationPlan,
+    PlannedRemoval,
+)
 from boilr_generator.exceptions import (
     FileConflictError,
     SourceNotFoundError,
 )
 from boilr_generator.generation import ProjectGenerator
-from boilr_generator.modules.schemas import RenderSource
+from boilr_generator.modules.schemas import (
+    CopySource,
+    RenderSource,
+)
 
 
 def test_project_generator_creates_output_directory(tmp_path, registry, manifest):
@@ -196,6 +202,8 @@ def test_generation_plan_can_be_serialized(
     assert len(env_file["content_sha256"]) == 64
     assert data["summary"]["content_bytes"] > 0
     assert data["clean_output"] is False
+    assert data["removals"] == []
+    assert data["summary"]["removals_count"] == 0
 
 def test_project_generator_plan_reports_missing_template(
     registry,
@@ -435,3 +443,194 @@ def test_project_generator_clean_is_planned(
     assert (
         tmp_path / "docker-compose.yml"
     ).exists()
+
+def test_copy_strategy_skip_skips_existing_tree(
+    registry,
+    tmp_path,
+):
+    source_root = tmp_path / "module" / "source"
+    output_path = tmp_path / "output"
+    destination = output_path / "target"
+
+    source_root.mkdir(parents=True)
+    destination.mkdir(parents=True)
+
+    (source_root / "new.txt").write_text(
+        "new",
+        encoding="utf-8",
+    )
+    (destination / "old.txt").write_text(
+        "old",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+
+    files, removals = generator._plan_copy_source(
+        module_key="example",
+        module_path=tmp_path / "module",
+        source=CopySource.model_validate(
+            {
+                "from": "source",
+                "to": "target",
+                "strategy": "skip",
+            }
+        ),
+        output_path=output_path,
+        field_path="modules.example.sources.copy[0].from",
+        clean=False,
+    )
+
+    assert files
+    assert all(file.action == "skip" for file in files)
+    assert removals == []
+
+
+def test_copy_strategy_replace_plans_removal(
+    registry,
+    tmp_path,
+):
+    source_root = tmp_path / "module" / "source"
+    output_path = tmp_path / "output"
+    destination = output_path / "target"
+
+    source_root.mkdir(parents=True)
+    destination.mkdir(parents=True)
+
+    (source_root / "new.txt").write_text(
+        "new",
+        encoding="utf-8",
+    )
+    (destination / "old.txt").write_text(
+        "old",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+
+    files, removals = generator._plan_copy_source(
+        module_key="example",
+        module_path=tmp_path / "module",
+        source=CopySource.model_validate(
+            {
+                "from": "source",
+                "to": "target",
+                "strategy": "replace",
+            }
+        ),
+        output_path=output_path,
+        field_path="modules.example.sources.copy[0].from",
+        clean=False,
+    )
+
+    assert all(
+        file.action == "create"
+        for file in files
+    )
+    assert len(removals) == 1
+    assert removals[0].path == destination
+    assert removals[0].relative_path == "target"
+    assert removals[0].reason == "replace"
+
+def test_copy_strategy_replace_executes_removal(
+    registry,
+    resolved_project,
+    tmp_path,
+):
+    source_root = tmp_path / "module" / "source"
+    output_path = tmp_path / "output"
+    destination = output_path / "target"
+
+    source_root.mkdir(parents=True)
+    destination.mkdir(parents=True)
+
+    source_file = source_root / "new.txt"
+    old_file = destination / "old.txt"
+
+    source_file.write_text(
+        "new content",
+        encoding="utf-8",
+    )
+    old_file.write_text(
+        "old content",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+
+    files, removals = generator._plan_copy_source(
+        module_key="example",
+        module_path=tmp_path / "module",
+        source=CopySource.model_validate(
+            {
+                "from": "source",
+                "to": "target",
+                "strategy": "replace",
+            }
+        ),
+        output_path=output_path,
+        field_path=(
+            "modules.example.sources.copy[0].from"
+        ),
+        clean=False,
+    )
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        files=files,
+        removals=removals,
+    )
+
+    generator.execute(plan)
+
+    assert old_file.exists() is False
+    assert (
+        destination / "new.txt"
+    ).read_text(encoding="utf-8") == (
+        "new content"
+    )
+
+
+def test_execute_rejects_unsafe_removal(
+    registry,
+    resolved_project,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    outside_path = tmp_path / "outside"
+
+    outside_path.mkdir()
+    protected_file = outside_path / "protected.txt"
+    protected_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        removals=[
+            PlannedRemoval(
+                path=outside_path,
+                relative_path="../outside",
+                module="example",
+                reason="replace",
+            )
+        ],
+    )
+
+    with pytest.raises(
+        FileConflictError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert error.context["reason"] == (
+        "unsafe_removal"
+    )
+    assert error.context["removal_path"] == str(
+        outside_path
+    )
+    assert protected_file.exists() is True

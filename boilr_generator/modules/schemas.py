@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
@@ -225,7 +225,11 @@ class CopySource(BaseModel):
 
     from_: str = Field(alias="from")
     to: str
-    strategy: str = "merge"
+    strategy: Literal[
+        "merge",
+        "skip",
+        "replace",
+    ] = "merge"
 
 
 class RenderSource(BaseModel):

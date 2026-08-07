@@ -31,6 +31,17 @@ class PlannedFile:
         """Return a stable fingerprint of prepared content."""
         return sha256(self.content).hexdigest()
 
+
+@dataclass(slots=True)
+class PlannedRemoval:
+    """One path that must be removed before writing files."""
+
+    path: Path
+    relative_path: str
+    module: str | None = None
+    reason: str = "replace"
+
+
 @dataclass(slots=True)
 class GenerationPlan:
     """Complete and inspectable project generation plan."""
@@ -38,8 +49,15 @@ class GenerationPlan:
     resolved_project: ResolvedProject
     output_path: Path
     files: list[PlannedFile] = field(default_factory=list)
-    docker_services: list[str] = field(default_factory=list)
-    env_variables: list[str] = field(default_factory=list)
+    removals: list[PlannedRemoval] = field(
+        default_factory=list
+    )
+    docker_services: list[str] = field(
+        default_factory=list
+    )
+    env_variables: list[str] = field(
+        default_factory=list
+    )
     clean_output: bool = False
 
     @property
@@ -82,6 +100,7 @@ class GenerationPlan:
             "files_to_skip": len(
                 self.files_to_skip
             ),
+            "removals_count": len(self.removals),
             "docker_services_count": len(
                 self.docker_services
             ),
@@ -95,7 +114,7 @@ class GenerationPlan:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize plan metadata without exposing file contents."""
+        """Serialize plan metadata without file contents."""
         data = asdict(self)
 
         data["output_path"] = str(self.output_path)
@@ -111,13 +130,14 @@ class GenerationPlan:
         for serialized_file, planned_file in zip(
             data["files"],
             self.files,
-            strict=True
+            strict=True,
         ):
             serialized_file.pop("content", None)
 
             serialized_file["source_path"] = (
                 str(serialized_file["source_path"])
-                if serialized_file["source_path"] is not None
+                if serialized_file["source_path"]
+                is not None
                 else None
             )
             serialized_file["destination_path"] = str(
@@ -129,6 +149,9 @@ class GenerationPlan:
             serialized_file["content_sha256"] = (
                 planned_file.content_sha256
             )
+
+        for removal in data["removals"]:
+            removal["path"] = str(removal["path"])
 
         data["summary"] = self.summary
 
