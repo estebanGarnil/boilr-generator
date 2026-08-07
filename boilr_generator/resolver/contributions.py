@@ -13,7 +13,12 @@ from boilr_generator.core.contributions import (
 from boilr_generator.core.module import ResolvedModule
 from boilr_generator.exceptions import (
     InvalidContributionError,
+    TemplateRenderError,
     UnknownExtensionPointError,
+)
+from boilr_generator.resolver.rendering import (
+    NativeRenderFailure,
+    render_native_value,
 )
 
 TYPE_MAPPING: dict[str, type] = {
@@ -58,16 +63,23 @@ class ContributionCollector:
         bindings: list[CapabilityBinding],
         extension_points: list[ExtensionPoint],
     ) -> list[Contribution]:
-        """Resolve and validate every declared contribution."""
+        """Resolve, render, and validate every contribution."""
         contributions: list[Contribution] = []
 
         extension_point_lookup = {
-            (extension_point.module_key, extension_point.key):
-            extension_point
+            (
+                extension_point.module_key,
+                extension_point.key,
+            ): extension_point
             for extension_point in extension_points
         }
 
         for module in modules:
+            render_context = self._build_render_context(
+                module,
+                bindings,
+            )
+
             for index, declaration in enumerate(
                 module.manifest.contributions
             ):
@@ -81,6 +93,18 @@ class ContributionCollector:
                     )
                 ]
 
+                if not target_bindings:
+                    continue
+
+                field_path = (
+                    f"modules.{module.key}."
+                    f"contributions[{index}]"
+                )
+
+                resolved_targets: list[
+                    tuple[CapabilityBinding, ExtensionPoint]
+                ] = []
+
                 for binding in target_bindings:
                     lookup_key = (
                         binding.provider_module_key,
@@ -88,11 +112,6 @@ class ContributionCollector:
                     )
                     extension_point = (
                         extension_point_lookup.get(lookup_key)
-                    )
-
-                    field_path = (
-                        f"modules.{module.key}."
-                        f"contributions[{index}]"
                     )
 
                     if extension_point is None:
@@ -105,7 +124,8 @@ class ContributionCollector:
 
                         raise UnknownExtensionPointError(
                             (
-                                f"Module '{binding.provider_module_key}' "
+                                f"Module "
+                                f"'{binding.provider_module_key}' "
                                 "does not expose extension point "
                                 f"'{declaration.extension_point}'."
                             ),
@@ -128,13 +148,36 @@ class ContributionCollector:
                                 ),
                             },
                             suggestion=(
-                                "Use an extension point exposed by the "
-                                "bound target module."
+                                "Use an extension point exposed "
+                                "by the bound target module."
                             ),
                         )
 
+                    resolved_targets.append(
+                        (
+                            binding,
+                            extension_point,
+                        )
+                    )
+
+                rendered_value = (
+                    self._render_contribution_value(
+                        declaration.value,
+                        render_context,
+                        module_key=module.key,
+                        target_binding=(
+                            declaration.target_binding
+                        ),
+                        extension_point=(
+                            declaration.extension_point
+                        ),
+                        field_path=f"{field_path}.value",
+                    )
+                )
+
+                for binding, extension_point in resolved_targets:
                     self._validate_contribution_type(
-                        value=declaration.value,
+                        value=rendered_value,
                         extension_point=extension_point,
                         contributor_module_key=module.key,
                         field_path=f"{field_path}.value",
@@ -152,11 +195,102 @@ class ContributionCollector:
                             extension_point=(
                                 declaration.extension_point
                             ),
-                            value=deepcopy(declaration.value),
+                            value=deepcopy(rendered_value),
                         )
                     )
 
         return contributions
+
+    def _build_render_context(
+        self,
+        module: ResolvedModule,
+        bindings: list[CapabilityBinding],
+    ) -> dict[str, Any]:
+        """Build the pre-extension contributor context."""
+        return {
+            **deepcopy(module.variables),
+            "options": deepcopy(module.options),
+            "bindings": self._build_binding_context(
+                module,
+                bindings,
+            ),
+        }
+
+    def _build_binding_context(
+        self,
+        module: ResolvedModule,
+        bindings: list[CapabilityBinding],
+    ) -> dict[str, Any]:
+        """Build bindings using requirement uniqueness rules."""
+        context: dict[str, Any] = {}
+
+        for requirement in module.manifest.requires:
+            matching_bindings = [
+                binding
+                for binding in bindings
+                if (
+                    binding.consumer_module_key == module.key
+                    and binding.binding_key
+                    == requirement.binding_key
+                    and binding.capability
+                    == requirement.capability
+                )
+            ]
+
+            if not matching_bindings:
+                continue
+
+            if requirement.unique:
+                context[requirement.binding_key] = deepcopy(
+                    matching_bindings[0].values
+                )
+            else:
+                context[requirement.binding_key] = [
+                    deepcopy(binding.values)
+                    for binding in matching_bindings
+                ]
+
+        return context
+
+    def _render_contribution_value(
+        self,
+        value: Any,
+        context: dict[str, Any],
+        *,
+        module_key: str,
+        target_binding: str,
+        extension_point: str,
+        field_path: str,
+    ) -> Any:
+        """Render one contribution with contributor context."""
+        try:
+            return render_native_value(
+                value,
+                context,
+                field_path=field_path,
+            )
+        except NativeRenderFailure as failure:
+            error = failure.error
+
+            raise TemplateRenderError(
+                (
+                    "Unable to render contribution value at "
+                    f"'{failure.field_path}': {error}"
+                ),
+                module_key=module_key,
+                field_path=failure.field_path,
+                context={
+                    "target": "contribution",
+                    "target_binding": target_binding,
+                    "extension_point": extension_point,
+                    "error_type": type(error).__name__,
+                },
+                suggestion=(
+                    "Check the contribution template and ensure "
+                    "every referenced variable, option, and "
+                    "binding is available."
+                ),
+            ) from error
 
     def _validate_contribution_type(
         self,
@@ -187,7 +321,7 @@ class ContributionCollector:
 
         raise InvalidContributionError(
             (
-                f"Contribution to extension point "
+                "Contribution to extension point "
                 f"'{extension_point.key}' must be of type "
                 f"'{extension_point.value_type}', got "
                 f"'{type(value).__name__}'."
@@ -201,7 +335,7 @@ class ContributionCollector:
                 "actual_type": type(value).__name__,
             },
             suggestion=(
-                f"Provide a value of type "
+                "Provide a value of type "
                 f"'{extension_point.value_type}'."
             ),
         )

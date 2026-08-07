@@ -1,21 +1,14 @@
 """Capability contract collection during project resolution."""
 
-from typing import Any
-
-from jinja2 import StrictUndefined, Undefined
-from jinja2.exceptions import TemplateError
-from jinja2.nativetypes import NativeEnvironment
-
 from boilr_generator.core.capabilities import (
     CapabilityProvider,
     CapabilityRequirement,
 )
 from boilr_generator.core.module import ResolvedModule
 from boilr_generator.exceptions import TemplateRenderError
-
-JINJA_ENVIRONMENT = NativeEnvironment(
-    autoescape=False,
-    undefined=StrictUndefined,
+from boilr_generator.resolver.rendering import (
+    NativeRenderFailure,
+    render_native_value,
 )
 
 
@@ -34,16 +27,38 @@ class CapabilityCollector:
                 module.manifest.provides
             ):
                 field_path = (
-                    f"modules.{module.key}.provides[{index}].values"
+                    f"modules.{module.key}."
+                    f"provides[{index}].values"
                 )
 
-                values = self._render_value(
-                    provision.values,
-                    module.variables,
-                    module_key=module.key,
-                    capability=provision.capability,
-                    field_path=field_path,
-                )
+                try:
+                    values = render_native_value(
+                        provision.values,
+                        module.variables,
+                        field_path=field_path,
+                    )
+                except NativeRenderFailure as failure:
+                    error = failure.error
+
+                    raise TemplateRenderError(
+                        (
+                            "Unable to render capability provider "
+                            f"value at '{failure.field_path}': "
+                            f"{error}"
+                        ),
+                        module_key=module.key,
+                        field_path=failure.field_path,
+                        context={
+                            "target": "capability_provider",
+                            "capability": provision.capability,
+                            "error_type": type(error).__name__,
+                        },
+                        suggestion=(
+                            "Check the capability value template "
+                            "and ensure every referenced variable "
+                            "is declared."
+                        ),
+                    ) from error
 
                 providers.append(
                     CapabilityProvider(
@@ -76,67 +91,3 @@ class CapabilityCollector:
                 )
 
         return requirements
-
-    def _render_value(
-        self,
-        value: Any,
-        context: dict[str, Any],
-        *,
-        module_key: str,
-        capability: str,
-        field_path: str,
-    ) -> Any:
-        """Render capability values recursively using native Jinja."""
-        if isinstance(value, str):
-            try:
-                template = JINJA_ENVIRONMENT.from_string(value)
-                rendered_value = template.render(**context)
-
-                if isinstance(rendered_value, Undefined):
-                    str(rendered_value)
-
-                return rendered_value
-            except TemplateError as error:
-                raise TemplateRenderError(
-                    (
-                        "Unable to render capability provider "
-                        f"value at '{field_path}': {error}"
-                    ),
-                    module_key=module_key,
-                    field_path=field_path,
-                    context={
-                        "target": "capability_provider",
-                        "capability": capability,
-                        "error_type": type(error).__name__,
-                    },
-                    suggestion=(
-                        "Check the capability value template and "
-                        "ensure every referenced variable is declared."
-                    ),
-                ) from error
-
-        if isinstance(value, list):
-            return [
-                self._render_value(
-                    item,
-                    context,
-                    module_key=module_key,
-                    capability=capability,
-                    field_path=f"{field_path}[{index}]",
-                )
-                for index, item in enumerate(value)
-            ]
-
-        if isinstance(value, dict):
-            return {
-                key: self._render_value(
-                    item,
-                    context,
-                    module_key=module_key,
-                    capability=capability,
-                    field_path=f"{field_path}.{key}",
-                )
-                for key, item in value.items()
-            }
-
-        return value

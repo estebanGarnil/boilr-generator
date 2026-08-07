@@ -1,6 +1,7 @@
 import pytest
 from boilr_generator.exceptions import (
     InvalidContributionError,
+    TemplateRenderError,
     UnknownExtensionPointError,
 )
 from boilr_generator.modules.schemas import (
@@ -310,3 +311,95 @@ def test_resolver_stores_collected_contributions(
     assert extension_value.contributor_module_keys == [
         "django"
     ]
+
+def test_collector_renders_dynamic_contribution_values(
+    resolved_project,
+):
+    project = resolved_project.model_copy(deep=True)
+
+    configure_contribution(
+        project,
+        value={
+            "project": "{{ project_name }}",
+            "port": (
+                "{{ bindings.primary_database.port }}"
+            ),
+            "rest_framework": (
+                "{{ options.rest_framework }}"
+            ),
+        },
+    )
+
+    collector = ContributionCollector()
+
+    extension_points = collector.collect_extension_points(
+        project.modules
+    )
+    contributions = collector.collect_contributions(
+        project.modules,
+        project.bindings,
+        extension_points,
+    )
+
+    assert len(contributions) == 1
+    assert contributions[0].value == {
+        "project": "my_app",
+        "port": 5432,
+        "rest_framework": True,
+    }
+    assert isinstance(
+        contributions[0].value["port"],
+        int,
+    )
+    assert isinstance(
+        contributions[0].value["rest_framework"],
+        bool,
+    )
+
+
+def test_collector_rejects_undefined_contribution_value(
+    resolved_project,
+):
+    project = resolved_project.model_copy(deep=True)
+
+    configure_contribution(
+        project,
+        value={
+            "pool": {
+                "size": "{{ missing_pool_size }}",
+            }
+        },
+    )
+
+    collector = ContributionCollector()
+
+    extension_points = collector.collect_extension_points(
+        project.modules
+    )
+
+    with pytest.raises(
+        TemplateRenderError
+    ) as error_info:
+        collector.collect_contributions(
+            project.modules,
+            project.bindings,
+            extension_points,
+        )
+
+    error = error_info.value
+
+    assert error.module_key == "django"
+    assert error.field_path == (
+        "modules.django.contributions[0]."
+        "value.pool.size"
+    )
+    assert error.context["target"] == "contribution"
+    assert error.context["target_binding"] == (
+        "primary_database"
+    )
+    assert error.context["extension_point"] == (
+        "database.options"
+    )
+    assert error.context["error_type"] == (
+        "UndefinedError"
+    )
