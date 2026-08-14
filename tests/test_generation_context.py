@@ -11,7 +11,6 @@ from boilr_generator.generation.docker import (
 )
 from boilr_generator.generation.env import EnvGenerator
 from boilr_generator.generation.files import FileGenerator
-from boilr_generator.modules.schemas import RenderSource
 
 
 def configure_unique_binding(project):
@@ -179,38 +178,28 @@ def test_file_generator_can_render_binding_values(
 
     assert django is not None
 
-    module_path = tmp_path / "django"
-    template_path = module_path / "binding.txt.j2"
-    output_path = tmp_path / "output"
+    template_path = tmp_path / "binding.txt.j2"
+    destination_path = tmp_path / "output" / "binding.txt"
 
-    module_path.mkdir()
     template_path.write_text(
         "{{ bindings.primary_database.host }}",
         encoding="utf-8",
     )
 
-    django.module_path = module_path
-    django.manifest.sources.copy_sources = []
-    django.manifest.sources.render = [
-        RenderSource.model_validate(
-            {
-                "from": "binding.txt.j2",
-                "to": "binding.txt",
-            }
-        )
-    ]
+    context = build_module_context(project, django)
 
-    project.modules = [django]
-
-    FileGenerator().render_sources(
-        project,
-        output_path,
+    content = FileGenerator().render_template_content(
+        template_path=template_path,
+        destination_path=destination_path,
+        context=context,
+        module_key="django",
+        field_path="modules.django.sources.render[0].from",
     )
 
-    assert (
-        output_path / "binding.txt"
-    ).read_text(encoding="utf-8") == "db"
+    assert content == "db"
+    assert destination_path.exists() is False
 
+    
 def test_module_context_contains_extension_values(
     resolved_project,
 ):
