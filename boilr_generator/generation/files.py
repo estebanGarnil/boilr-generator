@@ -6,7 +6,6 @@ from typing import Any
 from jinja2 import Environment, StrictUndefined
 from jinja2.exceptions import TemplateError
 
-
 from boilr_generator.exceptions import (
     SourceNotFoundError,
     TemplateRenderError,
