@@ -1,6 +1,5 @@
 """File copying and template rendering."""
 
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -24,87 +23,6 @@ JINJA_ENVIRONMENT = Environment(
 
 class FileGenerator:
     """Copy and render module source files."""
-
-    def copy_sources(
-        self,
-        project: ResolvedProject,
-        output_path: str | Path,
-    ) -> None:
-        """Copy every source declared by the resolved modules."""
-        output_path = Path(output_path)
-
-        for module in project.ordered_modules():
-            for index, source in enumerate(
-                module.manifest.sources.copy_sources
-            ):
-                source_path = module.resolve_source_path(
-                    source.from_
-                )
-                destination_path = output_path / source.to
-                field_path = (
-                    f"modules.{module.key}."
-                    f"sources.copy[{index}].from"
-                )
-
-                self._copy_source(
-                    source_path=source_path,
-                    destination_path=destination_path,
-                    strategy=source.strategy,
-                    module_key=module.key,
-                    field_path=field_path,
-                )
-
-    def _copy_source(
-        self,
-        source_path: Path,
-        destination_path: Path,
-        strategy: str,
-        *,
-        module_key: str,
-        field_path: str,
-    ) -> None:
-        """Copy one source using its collision strategy."""
-        if not source_path.exists():
-            raise SourceNotFoundError(
-                f"Source path not found: {source_path}",
-                module_key=module_key,
-                field_path=field_path,
-                context={
-                    "source_path": str(source_path),
-                    "source_kind": "copy",
-                },
-                suggestion=(
-                    "Check the source path declared in the "
-                    "module manifest and ensure the referenced "
-                    "file or directory is packaged."
-                ),
-            )
-
-        if destination_path.exists():
-            if strategy == "skip":
-                return
-
-            if strategy == "replace":
-                if destination_path.is_dir():
-                    shutil.rmtree(destination_path)
-                else:
-                    destination_path.unlink()
-
-        if source_path.is_dir():
-            shutil.copytree(
-                source_path,
-                destination_path,
-                dirs_exist_ok=(strategy == "merge"),
-            )
-        else:
-            destination_path.parent.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-            shutil.copy2(
-                source_path,
-                destination_path,
-            )
 
     def render_sources(
         self,

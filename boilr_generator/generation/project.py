@@ -11,7 +11,6 @@ from boilr_generator.core.generation_plan import (
     PlannedFile,
     PlannedRemoval,
 )
-from boilr_generator.core.project import ResolvedProject
 from boilr_generator.exceptions import (
     FileConflictError,
     SourceNotFoundError,
@@ -37,22 +36,6 @@ class ProjectGenerator:
         self.file_generator = FileGenerator()
         self.docker_generator = DockerComposeGenerator()
         self.env_generator = EnvGenerator()
-
-    def generate(
-        self,
-        manifest: ProjectManifest,
-        output_path: str | Path,
-        clean: bool = False,
-    ) -> ResolvedProject:
-        """Resolve, plan and execute a project generation."""
-        plan = self.plan(
-            manifest,
-            output_path,
-            clean=clean,
-        )
-        self.execute(plan)
-
-        return plan.resolved_project
 
     def plan(
         self,

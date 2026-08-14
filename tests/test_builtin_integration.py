@@ -4,7 +4,6 @@ import pytest
 from boilr_generator.exceptions import (
     InvalidContributionError,
 )
-from boilr_generator.generation import ProjectGenerator
 from boilr_generator.manifest import (
     load_project_manifest_from_dict,
 )
@@ -140,49 +139,6 @@ def test_django_postgres_integration_resolves_declaratively(
     assert django is not None
     assert "postgres" not in django.manifest.dependencies
     assert "mysql" not in django.manifest.dependencies
-
-
-def test_django_postgres_integration_generates_driver(
-    registry,
-    valid_manifest_data,
-    tmp_path,
-):
-    manifest = build_integration_manifest(
-        valid_manifest_data
-    )
-
-    output_path = tmp_path / "generated"
-
-    ProjectGenerator(registry).generate(
-        manifest=manifest,
-        output_path=output_path,
-        clean=True,
-    )
-
-    requirements = (
-        output_path
-        / "backend"
-        / "requirements.txt"
-    ).read_text(encoding="utf-8")
-
-    assert "psycopg[binary]" in (
-        line.strip()
-        for line in requirements.splitlines()
-    )
-
-    settings = (
-        output_path
-        / "backend"
-        / "config"
-        / "settings"
-        / "base.py"
-    ).read_text(encoding="utf-8")
-
-    assert (
-        '"ENGINE": "django.db.backends.postgresql"'
-        in settings
-    )
-
 
 def test_django_rejects_missing_database_integration(
     registry,
