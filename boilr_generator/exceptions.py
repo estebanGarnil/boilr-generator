@@ -262,6 +262,12 @@ class EnvironmentConflictError(GenerationError):
     code = "environment_conflict"
 
 
+class InvalidEnvironmentVariableError(GenerationError):
+    """Raised when an environment export is unsafe."""
+
+    code = "invalid_environment_variable"
+
+
 class TemplateRenderError(GenerationError):
     """Raised when a template cannot be rendered."""
 
@@ -302,6 +308,7 @@ __all__ = [
     "GenerationError",
     "IncompatibleModuleError",
     "InvalidContributionError",
+    "InvalidEnvironmentVariableError",
     "InvalidOptionTypeError",
     "InvalidVariableTypeError",
     "ManifestError",
