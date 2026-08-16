@@ -2,11 +2,13 @@
 import pytest
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
+    PlannedFile,
     PlannedRemoval,
 )
 from boilr_generator.exceptions import (
     FileConflictError,
     SourceNotFoundError,
+    UnsafePathError,
 )
 from boilr_generator.generation import ProjectGenerator
 from boilr_generator.modules.schemas import (
@@ -664,7 +666,7 @@ def test_execute_rejects_unsafe_removal(
     )
 
     with pytest.raises(
-        FileConflictError
+        UnsafePathError
     ) as error_info:
         ProjectGenerator(registry).execute(plan)
 
@@ -677,3 +679,270 @@ def test_execute_rejects_unsafe_removal(
         outside_path
     )
     assert protected_file.exists() is True
+
+def test_copy_source_cannot_escape_module_directory(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    outside_file = tmp_path / "outside.txt"
+
+    module_path.mkdir()
+    outside_file.write_text("protected", encoding="utf-8")
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError) as error_info:
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "../outside.txt",
+                    "to": "generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+    error = error_info.value
+
+    assert error.code == "unsafe_path"
+    assert error.context["reason"] == "unsafe_source"
+    assert error.context["source_path"]
+    assert outside_file.read_text(encoding="utf-8") == (
+        "protected"
+    )
+
+
+def test_render_source_cannot_escape_module_directory(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    outside_template = tmp_path / "outside.j2"
+
+    module_path.mkdir()
+    outside_template.write_text("protected", encoding="utf-8")
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError) as error_info:
+        generator._plan_render_source(
+            module_key="example",
+            module_path=module_path,
+            source=RenderSource.model_validate(
+                {
+                    "from": "../outside.j2",
+                    "to": "generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.render[0].from"
+            ),
+            context={},
+        )
+
+    assert error_info.value.context["reason"] == (
+        "unsafe_source"
+    )
+
+
+def test_copy_destination_cannot_escape_output_directory(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    source_file = module_path / "source.txt"
+
+    module_path.mkdir()
+    source_file.write_text("content", encoding="utf-8")
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError) as error_info:
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "source.txt",
+                    "to": "../outside.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+    error = error_info.value
+
+    assert error.context["reason"] == "unsafe_destination"
+    assert error.field_path == (
+        "modules.example.sources.copy[0].to"
+    )
+
+
+def test_render_destination_cannot_be_absolute(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    source_file = module_path / "template.j2"
+    outside_file = tmp_path / "outside.txt"
+
+    module_path.mkdir()
+    source_file.write_text("content", encoding="utf-8")
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError) as error_info:
+        generator._plan_render_source(
+            module_key="example",
+            module_path=module_path,
+            source=RenderSource.model_validate(
+                {
+                    "from": "template.j2",
+                    "to": str(outside_file),
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.render[0].from"
+            ),
+            context={},
+        )
+
+    error = error_info.value
+
+    assert error.context["reason"] == "unsafe_destination"
+    assert error.field_path == (
+        "modules.example.sources.render[0].to"
+    )
+
+
+def test_execute_rejects_unsafe_file_destination(
+    registry,
+    resolved_project,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    outside_file = tmp_path / "outside.txt"
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        files=[
+            PlannedFile(
+                source_path=None,
+                destination_path=outside_file,
+                relative_destination_path="../outside.txt",
+                operation="generate",
+                action="create",
+                content=b"unsafe",
+            )
+        ],
+    )
+
+    with pytest.raises(UnsafePathError) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    assert error_info.value.context["reason"] == (
+        "unsafe_destination"
+    )
+    assert outside_file.exists() is False
+
+
+def test_source_symbolic_link_cannot_escape_module(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    outside_file = tmp_path / "outside.txt"
+    linked_file = module_path / "linked.txt"
+
+    module_path.mkdir()
+    outside_file.write_text("protected", encoding="utf-8")
+
+    try:
+        linked_file.symlink_to(outside_file)
+    except (NotImplementedError, OSError):
+        pytest.skip(
+            "Symbolic links are not available on this system."
+        )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError):
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "linked.txt",
+                    "to": "generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+
+def test_destination_symbolic_link_cannot_escape_output(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    outside_directory = tmp_path / "outside"
+    linked_directory = output_path / "linked"
+    source_file = module_path / "template.j2"
+
+    module_path.mkdir()
+    output_path.mkdir()
+    outside_directory.mkdir()
+    source_file.write_text("content", encoding="utf-8")
+
+    try:
+        linked_directory.symlink_to(
+            outside_directory,
+            target_is_directory=True,
+        )
+    except (NotImplementedError, OSError):
+        pytest.skip(
+            "Symbolic links are not available on this system."
+        )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError):
+        generator._plan_render_source(
+            module_key="example",
+            module_path=module_path,
+            source=RenderSource.model_validate(
+                {
+                    "from": "template.j2",
+                    "to": "linked/generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.render[0].from"
+            ),
+            context={},
+        )

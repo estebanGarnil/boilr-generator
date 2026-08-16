@@ -234,6 +234,10 @@ class SourceNotFoundError(GenerationError):
 
     code = "source_not_found"
 
+class UnsafePathError(GenerationError):
+    """Raised when a path escapes its allowed directory."""
+
+    code = "unsafe_path"
 
 class FileConflictError(GenerationError):
     """Raised when multiple operations conflict over the same file."""
@@ -310,6 +314,7 @@ __all__ = [
     "OutputDirectoryError",
     "ResolutionError",
     "SourceNotFoundError",
+    "UnsafePathError",
     "TemplateRenderError",
     "UnknownExtensionPointError",
     "UnknownOptionError",

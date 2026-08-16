@@ -16,6 +16,7 @@ from boilr_generator.exceptions import (
     TemplateRenderError,
     UnknownOptionError,
     UnknownVariableError,
+    UnsafePathError,
 )
 
 
@@ -34,6 +35,7 @@ from boilr_generator.exceptions import (
         InvalidOptionTypeError,
         UnknownOptionError,
         UnknownVariableError,
+        UnsafePathError,
     ],
 )
 def test_all_boilr_errors_inherit_from_root(exception_type):

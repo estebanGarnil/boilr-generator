@@ -14,6 +14,7 @@ from boilr_generator.core.generation_plan import (
 from boilr_generator.exceptions import (
     FileConflictError,
     SourceNotFoundError,
+    UnsafePathError,
 )
 from boilr_generator.generation.context import (
     build_module_context,
@@ -145,6 +146,24 @@ class ProjectGenerator:
 
         output_path = plan.output_path
 
+        for planned_file in plan.files:
+            self._validate_destination_path(
+                path=planned_file.destination_path,
+                output_path=output_path,
+                module_key=planned_file.module,
+                field_path=(
+                    "generation.files."
+                    f"{planned_file.relative_destination_path}"
+                ),
+            )
+
+        for removal in plan.removals:
+            self._validate_removal_path(
+                path=removal.path,
+                output_path=output_path,
+                module_key=removal.module,
+            )
+
         if plan.clean_output and output_path.exists():
             shutil.rmtree(output_path)
         else:
@@ -258,6 +277,23 @@ class ProjectGenerator:
         source_path = module_path / source.from_
         destination_path = output_path / source.to
 
+        destination_field_path = (
+            f"{field_path.rsplit('.', 1)[0]}.to"
+        )
+
+        self._validate_source_path(
+            path=source_path,
+            module_path=module_path,
+            module_key=module_key,
+            field_path=field_path,
+        )
+        self._validate_destination_path(
+            path=destination_path,
+            output_path=output_path,
+            module_key=module_key,
+            field_path=destination_field_path,
+        )
+
         rendered_content = (
             self.file_generator.render_template_content(
                 template_path=source_path,
@@ -291,6 +327,24 @@ class ProjectGenerator:
         source_path = module_path / source.from_
         destination_root = output_path / source.to
 
+        destination_field_path = (
+            f"{field_path.rsplit('.', 1)[0]}.to"
+        )
+
+        self._validate_source_path(
+            path=source_path,
+            module_path=module_path,
+            module_key=module_key,
+            field_path=field_path,
+        )
+        self._validate_destination_path(
+            path=destination_root,
+            output_path=output_path,
+            module_key=module_key,
+            field_path=destination_field_path,
+            allow_output_root=True,
+        )
+
         if not source_path.exists():
             raise SourceNotFoundError(
                 f"Source path not found: {source_path}",
@@ -322,6 +376,13 @@ class ProjectGenerator:
             ):
                 if not file_path.is_file():
                     continue
+
+                self._validate_source_path(
+                    path=file_path,
+                    module_path=module_path,
+                    module_key=module_key,
+                    field_path=field_path,
+                )
 
                 relative_source_path = (
                     file_path.relative_to(source_path)
@@ -374,6 +435,99 @@ class ProjectGenerator:
 
         return planned_files, removals
 
+    def _validate_source_path(
+        self,
+        *,
+        path: Path,
+        module_path: Path,
+        module_key: str,
+        field_path: str,
+    ) -> str:
+        """Require a source to remain inside its module."""
+        return self._validate_contained_path(
+            path=path,
+            allowed_root=module_path,
+            module_key=module_key,
+            field_path=field_path,
+            path_kind="source",
+            allow_root=True,
+        )
+
+    def _validate_destination_path(
+        self,
+        *,
+        path: Path,
+        output_path: Path,
+        module_key: str | None,
+        field_path: str,
+        allow_output_root: bool = False,
+    ) -> str:
+        """Require a destination to remain inside the output."""
+        return self._validate_contained_path(
+            path=path,
+            allowed_root=output_path,
+            module_key=module_key,
+            field_path=field_path,
+            path_kind="destination",
+            allow_root=allow_output_root,
+        )
+
+    def _validate_contained_path(
+        self,
+        *,
+        path: Path,
+        allowed_root: Path,
+        module_key: str | None,
+        field_path: str,
+        path_kind: str,
+        allow_root: bool,
+    ) -> str:
+        """Validate lexical paths and resolved symbolic links."""
+        resolved_root = allowed_root.resolve()
+        resolved_path = path.resolve()
+
+        try:
+            relative_path = resolved_path.relative_to(
+                resolved_root
+            )
+        except ValueError:
+            relative_path = None
+
+        if (
+            relative_path is None
+            or (
+                relative_path == Path(".")
+                and not allow_root
+            )
+        ):
+            root_description = (
+                "module directory"
+                if path_kind == "source"
+                else "project output directory"
+            )
+
+            raise UnsafePathError(
+                (
+                    f"Unsafe {path_kind} path outside the "
+                    f"{root_description}: '{path}'."
+                ),
+                module_key=module_key,
+                field_path=field_path,
+                context={
+                    "reason": f"unsafe_{path_kind}",
+                    "path_kind": path_kind,
+                    f"{path_kind}_path": str(path),
+                    "resolved_path": str(resolved_path),
+                    "allowed_root": str(resolved_root),
+                },
+                suggestion=(
+                    f"Choose a {path_kind} path located inside "
+                    f"the {root_description}."
+                ),
+            )
+
+        return str(relative_path)
+
     def _build_planned_removal(
         self,
         *,
@@ -403,41 +557,14 @@ class ProjectGenerator:
         module_key: str | None,
     ) -> str:
         """Reject removal of or outside the output directory."""
-        resolved_output = output_path.resolve()
-        resolved_path = path.resolve()
-
-        try:
-            relative_path = resolved_path.relative_to(
-                resolved_output
-            )
-        except ValueError:
-            relative_path = None
-
-        if (
-            relative_path is None
-            or relative_path == Path(".")
-        ):
-            displayed_path = str(path)
-
-            raise FileConflictError(
-                (
-                    "Unsafe planned removal outside the project "
-                    f"output: '{displayed_path}'."
-                ),
-                module_key=module_key,
-                field_path="generation.removals",
-                context={
-                    "reason": "unsafe_removal",
-                    "removal_path": displayed_path,
-                    "output_path": str(output_path),
-                },
-                suggestion=(
-                    "Choose a copy destination located strictly "
-                    "inside the project output directory."
-                ),
-            )
-
-        return str(relative_path)
+        return self._validate_contained_path(
+            path=path,
+            allowed_root=output_path,
+            module_key=module_key,
+            field_path="generation.removals",
+            path_kind="removal",
+            allow_root=False,
+        )
 
     def _build_planned_file(
         self,
@@ -451,6 +578,15 @@ class ProjectGenerator:
         mode: int | None = None,
         action_override: str | None = None,
     ) -> PlannedFile:
+        relative_destination_path = (
+            self._validate_destination_path(
+                path=destination_path,
+                output_path=output_path,
+                module_key=module,
+                field_path="generation.files",
+            )
+        )
+
         action = (
             action_override
             if action_override is not None
@@ -463,9 +599,7 @@ class ProjectGenerator:
         return PlannedFile(
             source_path=source_path,
             destination_path=destination_path,
-            relative_destination_path=str(
-                destination_path.relative_to(output_path)
-            ),
+            relative_destination_path=relative_destination_path,
             operation=operation,
             action=action,
             module=module,
