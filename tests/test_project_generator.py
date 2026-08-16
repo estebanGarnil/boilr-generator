@@ -1,3 +1,4 @@
+from pathlib import Path
 
 import pytest
 from boilr_generator.core.generation_plan import (
@@ -7,6 +8,7 @@ from boilr_generator.core.generation_plan import (
 )
 from boilr_generator.exceptions import (
     FileConflictError,
+    OutputDirectoryError,
     SourceNotFoundError,
     UnsafePathError,
 )
@@ -946,3 +948,179 @@ def test_destination_symbolic_link_cannot_escape_output(
             ),
             context={},
         )
+
+@pytest.mark.parametrize(
+    "protected_path",
+    [
+        Path.cwd(),
+        Path.home(),
+    ],
+)
+def test_clean_plan_rejects_protected_directory(
+    registry,
+    manifest,
+    protected_path,
+):
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.plan(
+            manifest=manifest,
+            output_path=protected_path,
+            clean=True,
+        )
+
+    error = error_info.value
+
+    assert error.code == "output_directory_error"
+    assert error.field_path == "generation.output_path"
+    assert error.context["reason"]
+    assert error.suggestion is not None
+
+
+def test_clean_plan_rejects_filesystem_root(
+    registry,
+    manifest,
+    tmp_path,
+):
+    filesystem_root = Path(tmp_path.anchor)
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.plan(
+            manifest=manifest,
+            output_path=filesystem_root,
+            clean=True,
+        )
+
+    assert error_info.value.context["reason"] == (
+        "filesystem_root"
+    )
+
+
+def test_clean_plan_rejects_output_file(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "output.txt"
+    output_path.write_text(
+        "protected",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.plan(
+            manifest=manifest,
+            output_path=output_path,
+            clean=True,
+        )
+
+    assert error_info.value.context["reason"] == (
+        "output_is_not_directory"
+    )
+    assert output_path.read_text(encoding="utf-8") == (
+        "protected"
+    )
+
+
+def test_clean_plan_rejects_symbolic_link(
+    registry,
+    manifest,
+    tmp_path,
+):
+    target_path = tmp_path / "target"
+    output_path = tmp_path / "output-link"
+
+    target_path.mkdir()
+
+    try:
+        output_path.symlink_to(
+            target_path,
+            target_is_directory=True,
+        )
+    except (NotImplementedError, OSError):
+        pytest.skip(
+            "Symbolic links are not available on this system."
+        )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.plan(
+            manifest=manifest,
+            output_path=output_path,
+            clean=True,
+        )
+
+    assert error_info.value.context["reason"] == (
+        "output_is_symbolic_link"
+    )
+    assert target_path.exists() is True
+
+
+def test_clean_plan_accepts_dedicated_output_directory(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "generated-project"
+    generator = ProjectGenerator(registry)
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    assert plan.clean_output is True
+    assert plan.output_path == output_path
+    assert output_path.exists() is False
+
+
+def test_execute_revalidates_clean_output_directory(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    protected_path = tmp_path / "protected"
+    protected_path.mkdir()
+
+    protected_file = protected_path / "keep.txt"
+    protected_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        Path,
+        "cwd",
+        classmethod(lambda cls: protected_path),
+    )
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=protected_path,
+        clean_output=True,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    assert error_info.value.context["reason"] == (
+        "current_working_directory"
+    )
+    assert protected_file.exists() is True

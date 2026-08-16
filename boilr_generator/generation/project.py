@@ -13,6 +13,7 @@ from boilr_generator.core.generation_plan import (
 )
 from boilr_generator.exceptions import (
     FileConflictError,
+    OutputDirectoryError,
     SourceNotFoundError,
     UnsafePathError,
 )
@@ -46,6 +47,8 @@ class ProjectGenerator:
     ) -> GenerationPlan:
         """Create a generation plan without writing files."""
         output_path = Path(output_path)
+        if clean:
+            self._validate_clean_output_path(output_path)
         resolved_project = self.resolver.resolve(manifest)
 
         files: list[PlannedFile] = []
@@ -137,6 +140,123 @@ class ProjectGenerator:
             removals=removals,
         )
 
+    def _validate_clean_output_path(
+        self,
+        output_path: Path,
+    ) -> None:
+        """Reject dangerous clean output directories."""
+        try:
+            resolved_output = output_path.resolve()
+        except OSError as error:
+            raise OutputDirectoryError(
+                (
+                    "Unable to resolve the output directory "
+                    f"before cleaning: '{output_path}'."
+                ),
+                field_path="generation.output_path",
+                context={
+                    "reason": "path_resolution_failed",
+                    "output_path": str(output_path),
+                    "error_type": type(error).__name__,
+                },
+                suggestion=(
+                    "Choose an accessible dedicated output "
+                    "directory."
+                ),
+            ) from error
+
+        if output_path.is_symlink():
+            self._raise_unsafe_clean_output(
+                output_path=output_path,
+                resolved_output=resolved_output,
+                reason="output_is_symbolic_link",
+            )
+
+        if (
+            output_path.exists()
+            and not output_path.is_dir()
+        ):
+            self._raise_unsafe_clean_output(
+                output_path=output_path,
+                resolved_output=resolved_output,
+                reason="output_is_not_directory",
+            )
+
+        filesystem_root = Path(
+            resolved_output.anchor
+        ).resolve()
+
+        protected_paths = [
+            (
+                "filesystem_root",
+                filesystem_root,
+            ),
+            (
+                "home_directory",
+                Path.home().resolve(),
+            ),
+            (
+                "current_working_directory",
+                Path.cwd().resolve(),
+            ),
+        ]
+
+        for protected_reason, protected_path in (
+            protected_paths
+        ):
+            if resolved_output == protected_path:
+                self._raise_unsafe_clean_output(
+                    output_path=output_path,
+                    resolved_output=resolved_output,
+                    reason=protected_reason,
+                    protected_path=protected_path,
+                )
+
+            if resolved_output in protected_path.parents:
+                self._raise_unsafe_clean_output(
+                    output_path=output_path,
+                    resolved_output=resolved_output,
+                    reason=(
+                        f"ancestor_of_{protected_reason}"
+                    ),
+                    protected_path=protected_path,
+                )
+
+    def _raise_unsafe_clean_output(
+        self,
+        *,
+        output_path: Path,
+        resolved_output: Path,
+        reason: str,
+        protected_path: Path | None = None,
+    ) -> None:
+        """Raise a structured unsafe-clean error."""
+        context = {
+            "reason": reason,
+            "output_path": str(output_path),
+            "resolved_output_path": str(
+                resolved_output
+            ),
+        }
+
+        if protected_path is not None:
+            context["protected_path"] = str(
+                protected_path
+            )
+
+        raise OutputDirectoryError(
+            (
+                "Refusing to clean unsafe output directory: "
+                f"'{output_path}'."
+            ),
+            field_path="generation.output_path",
+            context=context,
+            suggestion=(
+                "Choose a dedicated project directory that is "
+                "not a system, home, current, or parent directory."
+            ),
+        )
+
     def execute(
         self,
         plan: GenerationPlan,
@@ -145,6 +265,8 @@ class ProjectGenerator:
         self._validate_file_conflicts(plan.files)
 
         output_path = plan.output_path
+        if plan.clean_output:
+            self._validate_clean_output_path(output_path)
 
         for planned_file in plan.files:
             self._validate_destination_path(
