@@ -1,6 +1,7 @@
 import pytest
 from boilr_generator.exceptions import (
     EnvironmentConflictError,
+    InvalidEnvironmentVariableError,
     TemplateRenderError,
 )
 from boilr_generator.generation.env import EnvGenerator
@@ -86,3 +87,138 @@ def test_env_generator_reports_template_render_errors(
     assert error.field_path == "modules.postgres.exports.env.BROKEN"
     assert error.context["target"] == "environment"
     assert error.context["error_type"] == "UndefinedError"
+
+@pytest.mark.parametrize(
+    "variable_name",
+    [
+        "",
+        "1INVALID",
+        "INVALID-NAME",
+        "INVALID=NAME",
+    ],
+)
+def test_env_generator_rejects_invalid_variable_name(
+    resolved_project,
+    variable_name,
+):
+    project = resolved_project.model_copy(deep=True)
+    postgres = project.get_module("postgres")
+
+    assert postgres is not None
+    assert postgres.manifest.exports is not None
+    assert postgres.manifest.exports.env is not None
+
+    postgres.manifest.exports.env.root[
+        variable_name
+    ] = "value"
+
+    with pytest.raises(
+        InvalidEnvironmentVariableError
+    ) as error_info:
+        EnvGenerator().generate(project)
+
+    error = error_info.value
+
+    assert error.code == "invalid_environment_variable"
+    assert error.module_key == "postgres"
+    assert error.context["reason"] == "invalid_name"
+    assert error.context["variable"] == variable_name
+    assert "expected_pattern" in error.context
+    assert error.suggestion is not None
+
+
+@pytest.mark.parametrize(
+    ("invalid_value", "expected_character"),
+    [
+        ("first\nsecond", "line_feed"),
+        ("first\rsecond", "line_feed"),
+        ("first\x00second", "null_byte"),
+    ],
+)
+def test_env_generator_rejects_unsafe_value(
+    resolved_project,
+    invalid_value,
+    expected_character,
+):
+    project = resolved_project.model_copy(deep=True)
+    postgres = project.get_module("postgres")
+
+    assert postgres is not None
+    assert postgres.manifest.exports is not None
+    assert postgres.manifest.exports.env is not None
+
+    postgres.manifest.exports.env.root[
+        "UNSAFE_VALUE"
+    ] = invalid_value
+
+    with pytest.raises(
+        InvalidEnvironmentVariableError
+    ) as error_info:
+        EnvGenerator().generate(project)
+
+    error = error_info.value
+
+    assert error.context["reason"] == "invalid_value"
+    assert error.context["variable"] == "UNSAFE_VALUE"
+    assert expected_character in (
+        error.context["invalid_characters"]
+    )
+    assert "value" not in error.context
+
+
+@pytest.mark.parametrize(
+    ("injected_value", "expected_character"),
+    [
+        (
+            "password\nINJECTED_VARIABLE=true",
+            "line_feed",
+        ),
+        (
+            "password\rINJECTED_VARIABLE=true",
+            "carriage_return",
+        ),
+    ],
+)
+def test_env_generator_rejects_rendered_line_injection(
+    resolved_project,
+    injected_value,
+    expected_character,
+):
+    project = resolved_project.model_copy(deep=True)
+    postgres = project.get_module("postgres")
+
+    assert postgres is not None
+
+    postgres.variables["db_password"] = injected_value
+
+    with pytest.raises(
+        InvalidEnvironmentVariableError
+    ) as error_info:
+        EnvGenerator().generate(project)
+
+    error = error_info.value
+
+    assert error.module_key == "postgres"
+    assert error.context["variable"] == "DB_PASSWORD"
+    assert expected_character in (
+        error.context["invalid_characters"]
+    )
+    assert "password" not in str(error.context)
+
+def test_env_generator_accepts_empty_value(
+    resolved_project,
+):
+    project = resolved_project.model_copy(deep=True)
+    postgres = project.get_module("postgres")
+
+    assert postgres is not None
+    assert postgres.manifest.exports is not None
+    assert postgres.manifest.exports.env is not None
+
+    postgres.manifest.exports.env.root[
+        "EMPTY_VALUE"
+    ] = ""
+
+    env = EnvGenerator().generate(project)
+
+    assert env["EMPTY_VALUE"] == ""

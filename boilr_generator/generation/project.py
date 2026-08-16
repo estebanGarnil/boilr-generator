@@ -2,7 +2,7 @@
 
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import yaml
 
@@ -13,7 +13,10 @@ from boilr_generator.core.generation_plan import (
 )
 from boilr_generator.exceptions import (
     FileConflictError,
+    OutputDirectoryError,
     SourceNotFoundError,
+    SourceReadError,
+    UnsafePathError,
 )
 from boilr_generator.generation.context import (
     build_module_context,
@@ -45,6 +48,8 @@ class ProjectGenerator:
     ) -> GenerationPlan:
         """Create a generation plan without writing files."""
         output_path = Path(output_path)
+        if clean:
+            self._validate_clean_output_path(output_path)
         resolved_project = self.resolver.resolve(manifest)
 
         files: list[PlannedFile] = []
@@ -136,6 +141,123 @@ class ProjectGenerator:
             removals=removals,
         )
 
+    def _validate_clean_output_path(
+        self,
+        output_path: Path,
+    ) -> None:
+        """Reject dangerous clean output directories."""
+        try:
+            resolved_output = output_path.resolve()
+        except OSError as error:
+            raise OutputDirectoryError(
+                (
+                    "Unable to resolve the output directory "
+                    f"before cleaning: '{output_path}'."
+                ),
+                field_path="generation.output_path",
+                context={
+                    "reason": "path_resolution_failed",
+                    "output_path": str(output_path),
+                    "error_type": type(error).__name__,
+                },
+                suggestion=(
+                    "Choose an accessible dedicated output "
+                    "directory."
+                ),
+            ) from error
+
+        if output_path.is_symlink():
+            self._raise_unsafe_clean_output(
+                output_path=output_path,
+                resolved_output=resolved_output,
+                reason="output_is_symbolic_link",
+            )
+
+        if (
+            output_path.exists()
+            and not output_path.is_dir()
+        ):
+            self._raise_unsafe_clean_output(
+                output_path=output_path,
+                resolved_output=resolved_output,
+                reason="output_is_not_directory",
+            )
+
+        filesystem_root = Path(
+            resolved_output.anchor
+        ).resolve()
+
+        protected_paths = [
+            (
+                "filesystem_root",
+                filesystem_root,
+            ),
+            (
+                "home_directory",
+                Path.home().resolve(),
+            ),
+            (
+                "current_working_directory",
+                Path.cwd().resolve(),
+            ),
+        ]
+
+        for protected_reason, protected_path in (
+            protected_paths
+        ):
+            if resolved_output == protected_path:
+                self._raise_unsafe_clean_output(
+                    output_path=output_path,
+                    resolved_output=resolved_output,
+                    reason=protected_reason,
+                    protected_path=protected_path,
+                )
+
+            if resolved_output in protected_path.parents:
+                self._raise_unsafe_clean_output(
+                    output_path=output_path,
+                    resolved_output=resolved_output,
+                    reason=(
+                        f"ancestor_of_{protected_reason}"
+                    ),
+                    protected_path=protected_path,
+                )
+
+    def _raise_unsafe_clean_output(
+        self,
+        *,
+        output_path: Path,
+        resolved_output: Path,
+        reason: str,
+        protected_path: Path | None = None,
+    ) -> None:
+        """Raise a structured unsafe-clean error."""
+        context = {
+            "reason": reason,
+            "output_path": str(output_path),
+            "resolved_output_path": str(
+                resolved_output
+            ),
+        }
+
+        if protected_path is not None:
+            context["protected_path"] = str(
+                protected_path
+            )
+
+        raise OutputDirectoryError(
+            (
+                "Refusing to clean unsafe output directory: "
+                f"'{output_path}'."
+            ),
+            field_path="generation.output_path",
+            context=context,
+            suggestion=(
+                "Choose a dedicated project directory that is "
+                "not a system, home, current, or parent directory."
+            ),
+        )
+
     def execute(
         self,
         plan: GenerationPlan,
@@ -145,8 +267,29 @@ class ProjectGenerator:
 
         output_path = plan.output_path
 
+        if plan.clean_output:
+            self._validate_clean_output_path(output_path)
+
+        for planned_file in plan.files:
+            self._validate_destination_path(
+                path=planned_file.destination_path,
+                output_path=output_path,
+                module_key=planned_file.module,
+                field_path=(
+                    "generation.files."
+                    f"{planned_file.relative_destination_path}"
+                ),
+            )
+
+        for removal in plan.removals:
+            self._validate_removal_path(
+                path=removal.path,
+                output_path=output_path,
+                module_key=removal.module,
+            )
+
         if plan.clean_output and output_path.exists():
-            shutil.rmtree(output_path)
+            self._remove_clean_output(output_path)
         else:
             for removal in plan.removals:
                 self._execute_removal(
@@ -154,30 +297,104 @@ class ProjectGenerator:
                     output_path=output_path,
                 )
 
-        output_path.mkdir(
-            parents=True,
-            exist_ok=True,
+        self._create_output_directory(
+            path=output_path,
+            module_key=None,
+            field_path="generation.output_path",
+            operation="create_output_directory",
         )
 
         for planned_file in plan.files:
             if planned_file.action == "skip":
                 continue
 
-            destination_path = (
-                planned_file.destination_path
+            self._write_planned_file(planned_file)
+
+    def _remove_clean_output(
+        self,
+        output_path: Path,
+    ) -> None:
+        """Remove a validated output directory."""
+        try:
+            shutil.rmtree(output_path)
+        except OSError as error:
+            self._raise_output_error(
+                path=output_path,
+                module_key=None,
+                field_path="generation.output_path",
+                operation="clean_output",
+                error=error,
             )
-            destination_path.parent.mkdir(
+
+    def _create_output_directory(
+        self,
+        *,
+        path: Path,
+        module_key: str | None,
+        field_path: str,
+        operation: str,
+    ) -> None:
+        """Create one output directory."""
+        try:
+            path.mkdir(
                 parents=True,
                 exist_ok=True,
             )
+        except OSError as error:
+            self._raise_output_error(
+                path=path,
+                module_key=module_key,
+                field_path=field_path,
+                operation=operation,
+                error=error,
+            )
+
+    def _write_planned_file(
+        self,
+        planned_file: PlannedFile,
+    ) -> None:
+        """Write one planned file with structured errors."""
+        destination_path = planned_file.destination_path
+        field_path = (
+            "generation.files."
+            f"{planned_file.relative_destination_path}"
+        )
+
+        self._create_output_directory(
+            path=destination_path.parent,
+            module_key=planned_file.module,
+            field_path=field_path,
+            operation="create_parent_directory",
+        )
+
+        try:
             destination_path.write_bytes(
                 planned_file.content
             )
+        except OSError as error:
+            self._raise_output_error(
+                path=destination_path,
+                module_key=planned_file.module,
+                field_path=field_path,
+                operation="write_file",
+                error=error,
+            )
 
-            if planned_file.mode is not None:
-                destination_path.chmod(
-                    planned_file.mode
-                )
+        if planned_file.mode is None:
+            return
+
+        try:
+            destination_path.chmod(
+                planned_file.mode
+            )
+        except OSError as error:
+            self._raise_output_error(
+                path=destination_path,
+                module_key=planned_file.module,
+                field_path=field_path,
+                operation="set_file_mode",
+                error=error,
+            )
 
     def _execute_removal(
         self,
@@ -192,13 +409,64 @@ class ProjectGenerator:
             module_key=removal.module,
         )
 
-        if not removal.path.exists():
-            return
+        field_path = (
+            "generation.removals."
+            f"{removal.relative_path}"
+        )
 
-        if removal.path.is_dir():
-            shutil.rmtree(removal.path)
-        else:
-            removal.path.unlink()
+        try:
+            if (
+                removal.path.is_symlink()
+                or not removal.path.is_dir()
+            ):
+                removal.path.unlink()
+            else:
+                shutil.rmtree(removal.path)
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            self._raise_output_error(
+                path=removal.path,
+                module_key=removal.module,
+                field_path=field_path,
+                operation="remove_path",
+                error=error,
+            )
+
+    def _raise_output_error(
+        self,
+        *,
+        path: Path,
+        module_key: str | None,
+        field_path: str,
+        operation: str,
+        error: OSError,
+    ) -> NoReturn:
+        """Raise a structured output filesystem error."""
+        context = {
+            "operation": operation,
+            "path": str(path),
+            "error_type": type(error).__name__,
+        }
+
+        if error.errno is not None:
+            context["errno"] = error.errno
+
+        raise OutputDirectoryError(
+            (
+                f"Output operation '{operation}' failed "
+                f"for '{path}': {error}"
+            ),
+            module_key=module_key,
+            field_path=field_path,
+            context=context,
+            suggestion=(
+                "Check directory permissions, available disk "
+                "space, and whether another process is using "
+                "the destination."
+            ),
+        ) from error
+
 
     def _serialize_yaml(
         self,
@@ -258,6 +526,23 @@ class ProjectGenerator:
         source_path = module_path / source.from_
         destination_path = output_path / source.to
 
+        destination_field_path = (
+            f"{field_path.rsplit('.', 1)[0]}.to"
+        )
+
+        self._validate_source_path(
+            path=source_path,
+            module_path=module_path,
+            module_key=module_key,
+            field_path=field_path,
+        )
+        self._validate_destination_path(
+            path=destination_path,
+            output_path=output_path,
+            module_key=module_key,
+            field_path=destination_field_path,
+        )
+
         rendered_content = (
             self.file_generator.render_template_content(
                 template_path=source_path,
@@ -291,6 +576,24 @@ class ProjectGenerator:
         source_path = module_path / source.from_
         destination_root = output_path / source.to
 
+        destination_field_path = (
+            f"{field_path.rsplit('.', 1)[0]}.to"
+        )
+
+        self._validate_source_path(
+            path=source_path,
+            module_path=module_path,
+            module_key=module_key,
+            field_path=field_path,
+        )
+        self._validate_destination_path(
+            path=destination_root,
+            output_path=output_path,
+            module_key=module_key,
+            field_path=destination_field_path,
+            allow_output_root=True,
+        )
+
         if not source_path.exists():
             raise SourceNotFoundError(
                 f"Source path not found: {source_path}",
@@ -317,11 +620,29 @@ class ProjectGenerator:
                 )
             )
         else:
-            for file_path in sorted(
-                source_path.rglob("*")
-            ):
+            try:
+                source_entries = sorted(
+                    source_path.rglob("*")
+                )
+            except OSError as error:
+                self._raise_source_read_error(
+                    path=source_path,
+                    module_key=module_key,
+                    field_path=field_path,
+                    operation="list_directory",
+                    error=error,
+                )
+
+            for file_path in source_entries:
                 if not file_path.is_file():
                     continue
+
+                self._validate_source_path(
+                    path=file_path,
+                    module_path=module_path,
+                    module_key=module_key,
+                    field_path=field_path,
+                )
 
                 relative_source_path = (
                     file_path.relative_to(source_path)
@@ -357,22 +678,177 @@ class ProjectGenerator:
                     )
                 )
 
-        planned_files = [
-            self._build_planned_file(
-                source_path=file_path,
-                destination_path=destination_path,
-                output_path=output_path,
-                operation="copy",
-                module=module_key,
-                strategy=source.strategy,
-                content=file_path.read_bytes(),
-                mode=file_path.stat().st_mode & 0o777,
-                action_override=action_override,
+        planned_files: list[PlannedFile] = []
+
+        for file_path, destination_path in source_files:
+            content, mode = self._read_copy_source(
+                path=file_path,
+                module_key=module_key,
+                field_path=field_path,
             )
-            for file_path, destination_path in source_files
-        ]
+
+            planned_files.append(
+                self._build_planned_file(
+                    source_path=file_path,
+                    destination_path=destination_path,
+                    output_path=output_path,
+                    operation="copy",
+                    module=module_key,
+                    strategy=source.strategy,
+                    content=content,
+                    mode=mode,
+                    action_override=action_override,
+                )
+            )
 
         return planned_files, removals
+
+    def _read_copy_source(
+        self,
+        *,
+        path: Path,
+        module_key: str,
+        field_path: str,
+    ) -> tuple[bytes, int]:
+        """Read one copy source and its permission mode."""
+        try:
+            content = path.read_bytes()
+            mode = path.stat().st_mode & 0o777
+        except OSError as error:
+            self._raise_source_read_error(
+                path=path,
+                module_key=module_key,
+                field_path=field_path,
+                operation="read_copy_source",
+                error=error,
+            )
+
+        return content, mode
+
+    def _raise_source_read_error(
+        self,
+        *,
+        path: Path,
+        module_key: str,
+        field_path: str,
+        operation: str,
+        error: OSError,
+    ) -> NoReturn:
+        """Raise a structured source filesystem error."""
+        context = {
+            "reason": "source_read_failed",
+            "source_kind": "copy",
+            "source_path": str(path),
+            "operation": operation,
+            "error_type": type(error).__name__,
+        }
+
+        if error.errno is not None:
+            context["errno"] = error.errno
+
+        raise SourceReadError(
+            f"Unable to read source '{path}': {error}",
+            module_key=module_key,
+            field_path=field_path,
+            context=context,
+            suggestion=(
+                "Check that the source exists and that its "
+                "contents and metadata are readable."
+            ),
+        ) from error
+
+    def _validate_source_path(
+        self,
+        *,
+        path: Path,
+        module_path: Path,
+        module_key: str,
+        field_path: str,
+    ) -> str:
+        """Require a source to remain inside its module."""
+        return self._validate_contained_path(
+            path=path,
+            allowed_root=module_path,
+            module_key=module_key,
+            field_path=field_path,
+            path_kind="source",
+            allow_root=True,
+        )
+
+    def _validate_destination_path(
+        self,
+        *,
+        path: Path,
+        output_path: Path,
+        module_key: str | None,
+        field_path: str,
+        allow_output_root: bool = False,
+    ) -> str:
+        """Require a destination to remain inside the output."""
+        return self._validate_contained_path(
+            path=path,
+            allowed_root=output_path,
+            module_key=module_key,
+            field_path=field_path,
+            path_kind="destination",
+            allow_root=allow_output_root,
+        )
+
+    def _validate_contained_path(
+        self,
+        *,
+        path: Path,
+        allowed_root: Path,
+        module_key: str | None,
+        field_path: str,
+        path_kind: str,
+        allow_root: bool,
+    ) -> str:
+        """Validate lexical paths and resolved symbolic links."""
+        resolved_root = allowed_root.resolve()
+        resolved_path = path.resolve()
+
+        try:
+            relative_path = resolved_path.relative_to(
+                resolved_root
+            )
+        except ValueError:
+            relative_path = None
+
+        if (
+            relative_path is None
+            or (
+                relative_path == Path(".")
+                and not allow_root
+            )
+        ):
+            root_description = (
+                "module directory"
+                if path_kind == "source"
+                else "project output directory"
+            )
+
+            raise UnsafePathError(
+                (
+                    f"Unsafe {path_kind} path outside the "
+                    f"{root_description}: '{path}'."
+                ),
+                module_key=module_key,
+                field_path=field_path,
+                context={
+                    "reason": f"unsafe_{path_kind}",
+                    "path_kind": path_kind,
+                    f"{path_kind}_path": str(path),
+                    "resolved_path": str(resolved_path),
+                    "allowed_root": str(resolved_root),
+                },
+                suggestion=(
+                    f"Choose a {path_kind} path located inside "
+                    f"the {root_description}."
+                ),
+            )
+
+        return str(relative_path)
 
     def _build_planned_removal(
         self,
@@ -403,41 +879,14 @@ class ProjectGenerator:
         module_key: str | None,
     ) -> str:
         """Reject removal of or outside the output directory."""
-        resolved_output = output_path.resolve()
-        resolved_path = path.resolve()
-
-        try:
-            relative_path = resolved_path.relative_to(
-                resolved_output
-            )
-        except ValueError:
-            relative_path = None
-
-        if (
-            relative_path is None
-            or relative_path == Path(".")
-        ):
-            displayed_path = str(path)
-
-            raise FileConflictError(
-                (
-                    "Unsafe planned removal outside the project "
-                    f"output: '{displayed_path}'."
-                ),
-                module_key=module_key,
-                field_path="generation.removals",
-                context={
-                    "reason": "unsafe_removal",
-                    "removal_path": displayed_path,
-                    "output_path": str(output_path),
-                },
-                suggestion=(
-                    "Choose a copy destination located strictly "
-                    "inside the project output directory."
-                ),
-            )
-
-        return str(relative_path)
+        return self._validate_contained_path(
+            path=path,
+            allowed_root=output_path,
+            module_key=module_key,
+            field_path="generation.removals",
+            path_kind="removal",
+            allow_root=False,
+        )
 
     def _build_planned_file(
         self,
@@ -451,6 +900,15 @@ class ProjectGenerator:
         mode: int | None = None,
         action_override: str | None = None,
     ) -> PlannedFile:
+        relative_destination_path = (
+            self._validate_destination_path(
+                path=destination_path,
+                output_path=output_path,
+                module_key=module,
+                field_path="generation.files",
+            )
+        )
+
         action = (
             action_override
             if action_override is not None
@@ -463,9 +921,7 @@ class ProjectGenerator:
         return PlannedFile(
             source_path=source_path,
             destination_path=destination_path,
-            relative_destination_path=str(
-                destination_path.relative_to(output_path)
-            ),
+            relative_destination_path=relative_destination_path,
             operation=operation,
             action=action,
             module=module,

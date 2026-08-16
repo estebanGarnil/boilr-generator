@@ -7,12 +7,18 @@ from boilr_generator.exceptions import (
     BoilrError,
     ContributionConflictError,
     DuplicateModuleError,
+    InvalidEnvironmentVariableError,
+    InvalidOptionTypeError,
     ManifestNotFoundError,
     MissingCapabilityError,
     MissingRequirementError,
     ModuleNotFoundError,
     OutputDirectoryError,
+    SourceReadError,
     TemplateRenderError,
+    UnknownOptionError,
+    UnknownVariableError,
+    UnsafePathError,
 )
 
 
@@ -28,6 +34,12 @@ from boilr_generator.exceptions import (
         ContributionConflictError,
         TemplateRenderError,
         OutputDirectoryError,
+        InvalidOptionTypeError,
+        UnknownOptionError,
+        UnknownVariableError,
+        UnsafePathError,
+        SourceReadError,
+        InvalidEnvironmentVariableError,
     ],
 )
 def test_all_boilr_errors_inherit_from_root(exception_type):

@@ -142,6 +142,22 @@ class MissingVariableError(ResolutionError):
 
     code = "missing_variable"
 
+class UnknownVariableError(ResolutionError):
+    """Raised when a project provides an undeclared variable."""
+
+    code = "unknown_variable"
+
+
+class UnknownOptionError(ResolutionError):
+    """Raised when a project provides an undeclared option."""
+
+    code = "unknown_option"
+
+
+class InvalidOptionTypeError(ResolutionError):
+    """Raised when a module option has an invalid type."""
+
+    code = "invalid_option_type"
 
 class InvalidVariableTypeError(ResolutionError):
     """Raised when a module variable has an invalid type."""
@@ -218,6 +234,15 @@ class SourceNotFoundError(GenerationError):
 
     code = "source_not_found"
 
+class SourceReadError(GenerationError):
+    """Raised when an existing source cannot be read."""
+
+    code = "source_read_error"
+
+class UnsafePathError(GenerationError):
+    """Raised when a path escapes its allowed directory."""
+
+    code = "unsafe_path"
 
 class FileConflictError(GenerationError):
     """Raised when multiple operations conflict over the same file."""
@@ -235,6 +260,12 @@ class EnvironmentConflictError(GenerationError):
     """Raised when environment variables contain conflicting definitions."""
 
     code = "environment_conflict"
+
+
+class InvalidEnvironmentVariableError(GenerationError):
+    """Raised when an environment export is unsafe."""
+
+    code = "invalid_environment_variable"
 
 
 class TemplateRenderError(GenerationError):
@@ -277,6 +308,8 @@ __all__ = [
     "GenerationError",
     "IncompatibleModuleError",
     "InvalidContributionError",
+    "InvalidEnvironmentVariableError",
+    "InvalidOptionTypeError",
     "InvalidVariableTypeError",
     "ManifestError",
     "ManifestLoadError",
@@ -293,6 +326,10 @@ __all__ = [
     "OutputDirectoryError",
     "ResolutionError",
     "SourceNotFoundError",
+    "SourceReadError",
+    "UnsafePathError",
     "TemplateRenderError",
     "UnknownExtensionPointError",
+    "UnknownOptionError",
+    "UnknownVariableError",
 ]
