@@ -23,7 +23,3 @@ class ResolvedModule(BaseModel):
     @property
     def priority(self) -> int: 
         return self.manifest.assembly.priority
-    
-    def resolve_source_path(self, relative_path: str) -> Path: 
-        return self.module_path / relative_path
-    

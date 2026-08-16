@@ -141,7 +141,6 @@ def test_django_postgres_integration_resolves_declaratively(
     assert "postgres" not in django.manifest.dependencies
     assert "mysql" not in django.manifest.dependencies
 
-
 def test_django_postgres_integration_generates_driver(
     registry,
     valid_manifest_data,
@@ -152,12 +151,14 @@ def test_django_postgres_integration_generates_driver(
     )
 
     output_path = tmp_path / "generated"
+    generator = ProjectGenerator(registry)
 
-    ProjectGenerator(registry).generate(
+    plan = generator.plan(
         manifest=manifest,
         output_path=output_path,
         clean=True,
     )
+    generator.execute(plan)
 
     requirements = (
         output_path
@@ -182,7 +183,6 @@ def test_django_postgres_integration_generates_driver(
         '"ENGINE": "django.db.backends.postgresql"'
         in settings
     )
-
 
 def test_django_rejects_missing_database_integration(
     registry,
