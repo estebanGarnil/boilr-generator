@@ -142,6 +142,22 @@ class MissingVariableError(ResolutionError):
 
     code = "missing_variable"
 
+class UnknownVariableError(ResolutionError):
+    """Raised when a project provides an undeclared variable."""
+
+    code = "unknown_variable"
+
+
+class UnknownOptionError(ResolutionError):
+    """Raised when a project provides an undeclared option."""
+
+    code = "unknown_option"
+
+
+class InvalidOptionTypeError(ResolutionError):
+    """Raised when a module option has an invalid type."""
+
+    code = "invalid_option_type"
 
 class InvalidVariableTypeError(ResolutionError):
     """Raised when a module variable has an invalid type."""
@@ -277,6 +293,7 @@ __all__ = [
     "GenerationError",
     "IncompatibleModuleError",
     "InvalidContributionError",
+    "InvalidOptionTypeError",
     "InvalidVariableTypeError",
     "ManifestError",
     "ManifestLoadError",
@@ -295,4 +312,6 @@ __all__ = [
     "SourceNotFoundError",
     "TemplateRenderError",
     "UnknownExtensionPointError",
+    "UnknownOptionError",
+    "UnknownVariableError",
 ]
