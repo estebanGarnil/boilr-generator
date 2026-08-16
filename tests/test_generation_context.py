@@ -198,7 +198,6 @@ def test_file_generator_can_render_binding_values(
 
     assert content == "db"
     assert destination_path.exists() is False
-
     
 def test_module_context_contains_extension_values(
     resolved_project,
