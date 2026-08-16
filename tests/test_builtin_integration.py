@@ -4,12 +4,11 @@ import pytest
 from boilr_generator.exceptions import (
     InvalidContributionError,
 )
+from boilr_generator.generation import ProjectGenerator
 from boilr_generator.manifest import (
     load_project_manifest_from_dict,
 )
 from boilr_generator.resolver import Resolver
-
-from boilr_generator.generation import ProjectGenerator
 
 
 def build_integration_manifest(valid_manifest_data):
