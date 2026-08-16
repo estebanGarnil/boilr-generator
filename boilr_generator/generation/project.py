@@ -2,7 +2,7 @@
 
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import yaml
 
@@ -15,6 +15,7 @@ from boilr_generator.exceptions import (
     FileConflictError,
     OutputDirectoryError,
     SourceNotFoundError,
+    SourceReadError,
     UnsafePathError,
 )
 from boilr_generator.generation.context import (
@@ -493,9 +494,20 @@ class ProjectGenerator:
                 )
             )
         else:
-            for file_path in sorted(
-                source_path.rglob("*")
-            ):
+            try:
+                source_entries = sorted(
+                    source_path.rglob("*")
+                )
+            except OSError as error:
+                self._raise_source_read_error(
+                    path=source_path,
+                    module_key=module_key,
+                    field_path=field_path,
+                    operation="list_directory",
+                    error=error,
+                )
+
+            for file_path in source_entries:
                 if not file_path.is_file():
                     continue
 
@@ -540,22 +552,84 @@ class ProjectGenerator:
                     )
                 )
 
-        planned_files = [
-            self._build_planned_file(
-                source_path=file_path,
-                destination_path=destination_path,
-                output_path=output_path,
-                operation="copy",
-                module=module_key,
-                strategy=source.strategy,
-                content=file_path.read_bytes(),
-                mode=file_path.stat().st_mode & 0o777,
-                action_override=action_override,
+        planned_files: list[PlannedFile] = []
+
+        for file_path, destination_path in source_files:
+            content, mode = self._read_copy_source(
+                path=file_path,
+                module_key=module_key,
+                field_path=field_path,
             )
-            for file_path, destination_path in source_files
-        ]
+
+            planned_files.append(
+                self._build_planned_file(
+                    source_path=file_path,
+                    destination_path=destination_path,
+                    output_path=output_path,
+                    operation="copy",
+                    module=module_key,
+                    strategy=source.strategy,
+                    content=content,
+                    mode=mode,
+                    action_override=action_override,
+                )
+            )
 
         return planned_files, removals
+
+    def _read_copy_source(
+        self,
+        *,
+        path: Path,
+        module_key: str,
+        field_path: str,
+    ) -> tuple[bytes, int]:
+        """Read one copy source and its permission mode."""
+        try:
+            content = path.read_bytes()
+            mode = path.stat().st_mode & 0o777
+        except OSError as error:
+            self._raise_source_read_error(
+                path=path,
+                module_key=module_key,
+                field_path=field_path,
+                operation="read_copy_source",
+                error=error,
+            )
+
+        return content, mode
+
+    def _raise_source_read_error(
+        self,
+        *,
+        path: Path,
+        module_key: str,
+        field_path: str,
+        operation: str,
+        error: OSError,
+    ) -> NoReturn:
+        """Raise a structured source filesystem error."""
+        context = {
+            "reason": "source_read_failed",
+            "source_kind": "copy",
+            "source_path": str(path),
+            "operation": operation,
+            "error_type": type(error).__name__,
+        }
+
+        if error.errno is not None:
+            context["errno"] = error.errno
+
+        raise SourceReadError(
+            f"Unable to read source '{path}': {error}",
+            module_key=module_key,
+            field_path=field_path,
+            context=context,
+            suggestion=(
+                "Check that the source exists and that its "
+                "contents and metadata are readable."
+            ),
+        ) from error
 
     def _validate_source_path(
         self,

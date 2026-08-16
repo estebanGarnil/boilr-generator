@@ -234,6 +234,11 @@ class SourceNotFoundError(GenerationError):
 
     code = "source_not_found"
 
+class SourceReadError(GenerationError):
+    """Raised when an existing source cannot be read."""
+
+    code = "source_read_error"
+
 class UnsafePathError(GenerationError):
     """Raised when a path escapes its allowed directory."""
 
@@ -314,6 +319,7 @@ __all__ = [
     "OutputDirectoryError",
     "ResolutionError",
     "SourceNotFoundError",
+    "SourceReadError",
     "UnsafePathError",
     "TemplateRenderError",
     "UnknownExtensionPointError",

@@ -10,6 +10,7 @@ from boilr_generator.exceptions import (
     FileConflictError,
     OutputDirectoryError,
     SourceNotFoundError,
+    SourceReadError,
     UnsafePathError,
 )
 from boilr_generator.generation import ProjectGenerator
@@ -1124,3 +1125,109 @@ def test_execute_revalidates_clean_output_directory(
         "current_working_directory"
     )
     assert protected_file.exists() is True
+
+def test_copy_source_wraps_file_read_error(
+    registry,
+    tmp_path,
+    monkeypatch,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    source_path = module_path / "source.txt"
+
+    module_path.mkdir()
+    source_path.write_text("content", encoding="utf-8")
+
+    original_read_bytes = Path.read_bytes
+
+    def fail_source_read(path):
+        if path == source_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        fail_source_read,
+    )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(SourceReadError) as error_info:
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "source.txt",
+                    "to": "generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == (
+        "read_copy_source"
+    )
+    assert error.context["errno"] == 13
+
+
+def test_copy_source_wraps_directory_listing_error(
+    registry,
+    tmp_path,
+    monkeypatch,
+):
+    module_path = tmp_path / "module"
+    source_path = module_path / "source"
+    output_path = tmp_path / "output"
+
+    source_path.mkdir(parents=True)
+
+    original_rglob = Path.rglob
+
+    def fail_source_listing(path, pattern):
+        if path == source_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_rglob(path, pattern)
+
+    monkeypatch.setattr(
+        Path,
+        "rglob",
+        fail_source_listing,
+    )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(SourceReadError) as error_info:
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "source",
+                    "to": "generated",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == (
+        "list_directory"
+    )
+    assert error.context["errno"] == 13
