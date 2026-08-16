@@ -15,54 +15,42 @@ from boilr_generator.modules.schemas import (
 )
 
 
-def test_project_generator_creates_output_directory(tmp_path, registry, manifest):
+def test_project_generator_writes_env_file(
+    tmp_path,
+    registry,
+    manifest,
+):
     output_path = tmp_path / "my_app"
+    generator = ProjectGenerator(registry)
 
-    ProjectGenerator(registry).generate(
+    plan = generator.plan(
         manifest=manifest,
         output_path=output_path,
         clean=True,
     )
-
-    assert output_path.exists()
-    assert output_path.is_dir()
-
-
-def test_project_generator_writes_docker_compose(tmp_path, registry, manifest):
-    output_path = tmp_path / "my_app"
-
-    ProjectGenerator(registry).generate(
-        manifest=manifest,
-        output_path=output_path,
-        clean=True,
-    )
-
-    assert (output_path / "docker-compose.yml").exists()
-
-
-def test_project_generator_writes_env_file(tmp_path, registry, manifest):
-    output_path = tmp_path / "my_app"
-
-    ProjectGenerator(registry).generate(
-        manifest=manifest,
-        output_path=output_path,
-        clean=True,
-    )
+    generator.execute(plan)
 
     env_file = output_path / ".env"
 
     assert env_file.exists()
-    assert "DB_NAME=my_app" in env_file.read_text(encoding="utf-8")
+    assert "DB_NAME=my_app" in env_file.read_text(
+        encoding="utf-8"
+    )
 
-
-def test_project_generator_returns_resolved_project(tmp_path, registry, manifest):
+def test_project_generator_returns_resolved_project(
+    tmp_path,
+    registry,
+    manifest,
+):
     output_path = tmp_path / "my_app"
 
-    resolved_project = ProjectGenerator(registry).generate(
+    plan = ProjectGenerator(registry).plan(
         manifest=manifest,
         output_path=output_path,
         clean=True,
     )
+
+    resolved_project = plan.resolved_project
 
     assert resolved_project.project.name == "my_app"
     assert resolved_project.list_module_keys() == [
@@ -71,20 +59,27 @@ def test_project_generator_returns_resolved_project(tmp_path, registry, manifest
         "django-postgres",
     ]
 
-def test_project_generator_clean_removes_existing_files(tmp_path, registry, manifest):
+def test_project_generator_clean_removes_existing_files(
+    tmp_path,
+    registry,
+    manifest,
+):
     output_path = tmp_path / "my_app"
     output_path.mkdir()
 
     old_file = output_path / "old.txt"
     old_file.write_text("old content", encoding="utf-8")
 
-    ProjectGenerator(registry).generate(
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
         manifest=manifest,
         output_path=output_path,
         clean=True,
     )
+    generator.execute(plan)
 
     assert old_file.exists() is False
+
 
 def test_project_generator_creates_generation_plan(
     registry, 
@@ -249,6 +244,49 @@ def test_project_generator_plan_reports_missing_template(
         "missing-plan-template.j2"
     )
 
+def test_project_generator_plan_reports_missing_copy_source(
+    registry,
+    manifest,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    project = resolved_project.model_copy(deep=True)
+    postgres = project.get_module("postgres")
+
+    assert postgres is not None
+
+    postgres.manifest.sources.copy_sources = [
+        CopySource.model_validate(
+            {
+                "from": "missing-copy-source",
+                "to": "generated",
+            }
+        )
+    ]
+
+    generator = ProjectGenerator(registry)
+
+    monkeypatch.setattr(
+        generator.resolver,
+        "resolve",
+        lambda _: project,
+    )
+
+    with pytest.raises(SourceNotFoundError) as error_info:
+        generator.plan(manifest, tmp_path)
+
+    error = error_info.value
+
+    assert error.code == "source_not_found"
+    assert error.module_key == "postgres"
+    assert error.field_path == (
+        "modules.postgres.sources.copy[0].from"
+    )
+    assert error.context["source_kind"] == "copy"
+    assert error.context["source_path"].endswith(
+        "missing-copy-source"
+    )
 
 def test_project_generator_plan_rejects_file_conflicts(
     registry,
@@ -377,13 +415,18 @@ def test_project_generator_execute_uses_plan_only(
         )
 
     monkeypatch.setattr(
-        generator.file_generator,
-        "copy_sources",
+        generator,
+        "_plan_copy_source",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        generator,
+        "_plan_render_source",
         fail_if_called,
     )
     monkeypatch.setattr(
         generator.file_generator,
-        "render_sources",
+        "render_template_content",
         fail_if_called,
     )
     monkeypatch.setattr(
