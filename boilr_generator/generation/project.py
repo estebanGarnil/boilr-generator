@@ -266,6 +266,7 @@ class ProjectGenerator:
         self._validate_file_conflicts(plan.files)
 
         output_path = plan.output_path
+
         if plan.clean_output:
             self._validate_clean_output_path(output_path)
 
@@ -288,7 +289,7 @@ class ProjectGenerator:
             )
 
         if plan.clean_output and output_path.exists():
-            shutil.rmtree(output_path)
+            self._remove_clean_output(output_path)
         else:
             for removal in plan.removals:
                 self._execute_removal(
@@ -296,30 +297,104 @@ class ProjectGenerator:
                     output_path=output_path,
                 )
 
-        output_path.mkdir(
-            parents=True,
-            exist_ok=True,
+        self._create_output_directory(
+            path=output_path,
+            module_key=None,
+            field_path="generation.output_path",
+            operation="create_output_directory",
         )
 
         for planned_file in plan.files:
             if planned_file.action == "skip":
                 continue
 
-            destination_path = (
-                planned_file.destination_path
+            self._write_planned_file(planned_file)
+
+    def _remove_clean_output(
+        self,
+        output_path: Path,
+    ) -> None:
+        """Remove a validated output directory."""
+        try:
+            shutil.rmtree(output_path)
+        except OSError as error:
+            self._raise_output_error(
+                path=output_path,
+                module_key=None,
+                field_path="generation.output_path",
+                operation="clean_output",
+                error=error,
             )
-            destination_path.parent.mkdir(
+
+    def _create_output_directory(
+        self,
+        *,
+        path: Path,
+        module_key: str | None,
+        field_path: str,
+        operation: str,
+    ) -> None:
+        """Create one output directory."""
+        try:
+            path.mkdir(
                 parents=True,
                 exist_ok=True,
             )
+        except OSError as error:
+            self._raise_output_error(
+                path=path,
+                module_key=module_key,
+                field_path=field_path,
+                operation=operation,
+                error=error,
+            )
+
+    def _write_planned_file(
+        self,
+        planned_file: PlannedFile,
+    ) -> None:
+        """Write one planned file with structured errors."""
+        destination_path = planned_file.destination_path
+        field_path = (
+            "generation.files."
+            f"{planned_file.relative_destination_path}"
+        )
+
+        self._create_output_directory(
+            path=destination_path.parent,
+            module_key=planned_file.module,
+            field_path=field_path,
+            operation="create_parent_directory",
+        )
+
+        try:
             destination_path.write_bytes(
                 planned_file.content
             )
+        except OSError as error:
+            self._raise_output_error(
+                path=destination_path,
+                module_key=planned_file.module,
+                field_path=field_path,
+                operation="write_file",
+                error=error,
+            )
 
-            if planned_file.mode is not None:
-                destination_path.chmod(
-                    planned_file.mode
-                )
+        if planned_file.mode is None:
+            return
+
+        try:
+            destination_path.chmod(
+                planned_file.mode
+            )
+        except OSError as error:
+            self._raise_output_error(
+                path=destination_path,
+                module_key=planned_file.module,
+                field_path=field_path,
+                operation="set_file_mode",
+                error=error,
+            )
 
     def _execute_removal(
         self,
@@ -334,13 +409,64 @@ class ProjectGenerator:
             module_key=removal.module,
         )
 
-        if not removal.path.exists():
-            return
+        field_path = (
+            "generation.removals."
+            f"{removal.relative_path}"
+        )
 
-        if removal.path.is_dir():
-            shutil.rmtree(removal.path)
-        else:
-            removal.path.unlink()
+        try:
+            if (
+                removal.path.is_symlink()
+                or not removal.path.is_dir()
+            ):
+                removal.path.unlink()
+            else:
+                shutil.rmtree(removal.path)
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            self._raise_output_error(
+                path=removal.path,
+                module_key=removal.module,
+                field_path=field_path,
+                operation="remove_path",
+                error=error,
+            )
+
+    def _raise_output_error(
+        self,
+        *,
+        path: Path,
+        module_key: str | None,
+        field_path: str,
+        operation: str,
+        error: OSError,
+    ) -> NoReturn:
+        """Raise a structured output filesystem error."""
+        context = {
+            "operation": operation,
+            "path": str(path),
+            "error_type": type(error).__name__,
+        }
+
+        if error.errno is not None:
+            context["errno"] = error.errno
+
+        raise OutputDirectoryError(
+            (
+                f"Output operation '{operation}' failed "
+                f"for '{path}': {error}"
+            ),
+            module_key=module_key,
+            field_path=field_path,
+            context=context,
+            suggestion=(
+                "Check directory permissions, available disk "
+                "space, and whether another process is using "
+                "the destination."
+            ),
+        ) from error
+
 
     def _serialize_yaml(
         self,

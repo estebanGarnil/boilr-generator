@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -1231,3 +1232,305 @@ def test_copy_source_wraps_directory_listing_error(
         "list_directory"
     )
     assert error.context["errno"] == 13
+
+def test_execute_wraps_clean_removal_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    protected_file = output_path / "protected.txt"
+    protected_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    original_rmtree = shutil.rmtree
+
+    def fail_clean(path, *args, **kwargs):
+        if Path(path) == output_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        shutil,
+        "rmtree",
+        fail_clean,
+    )
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        clean_output=True,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == "clean_output"
+    assert error.context["errno"] == 13
+    assert protected_file.exists() is True
+
+
+def test_execute_wraps_output_directory_creation_error(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(manifest, output_path)
+
+    original_mkdir = Path.mkdir
+
+    def fail_output_creation(path, *args, **kwargs):
+        if path == output_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        Path,
+        "mkdir",
+        fail_output_creation,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.execute(plan)
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == (
+        "create_output_directory"
+    )
+    assert error.context["errno"] == 13
+
+
+def test_execute_wraps_parent_directory_creation_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    destination_path = (
+        output_path / "nested" / "generated.txt"
+    )
+    nested_path = destination_path.parent
+
+    output_path.mkdir()
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        files=[
+            PlannedFile(
+                source_path=None,
+                destination_path=destination_path,
+                relative_destination_path=(
+                    "nested/generated.txt"
+                ),
+                operation="generate",
+                action="create",
+                content=b"content",
+            )
+        ],
+    )
+
+    original_mkdir = Path.mkdir
+
+    def fail_parent_creation(path, *args, **kwargs):
+        if path == nested_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        Path,
+        "mkdir",
+        fail_parent_creation,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    assert error_info.value.context["operation"] == (
+        "create_parent_directory"
+    )
+    assert destination_path.exists() is False
+
+
+def test_execute_wraps_file_write_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    destination_path = output_path / "generated.txt"
+
+    output_path.mkdir()
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        files=[
+            PlannedFile(
+                source_path=None,
+                destination_path=destination_path,
+                relative_destination_path="generated.txt",
+                operation="generate",
+                action="create",
+                content=b"content",
+            )
+        ],
+    )
+
+    original_write_bytes = Path.write_bytes
+
+    def fail_file_write(path, data):
+        if path == destination_path:
+            raise OSError(28, "No space left on device")
+
+        return original_write_bytes(path, data)
+
+    monkeypatch.setattr(
+        Path,
+        "write_bytes",
+        fail_file_write,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, OSError)
+    assert error.context["operation"] == "write_file"
+    assert error.context["errno"] == 28
+    assert destination_path.exists() is False
+
+
+def test_execute_wraps_file_mode_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    destination_path = output_path / "generated.txt"
+
+    output_path.mkdir()
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        files=[
+            PlannedFile(
+                source_path=None,
+                destination_path=destination_path,
+                relative_destination_path="generated.txt",
+                operation="generate",
+                action="create",
+                content=b"content",
+                mode=0o644,
+            )
+        ],
+    )
+
+    original_chmod = Path.chmod
+
+    def fail_file_mode(path, mode):
+        if path == destination_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(
+        Path,
+        "chmod",
+        fail_file_mode,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert error.context["operation"] == "set_file_mode"
+    assert error.context["errno"] == 13
+    assert destination_path.exists() is True
+
+
+def test_execute_wraps_planned_removal_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    removal_path = output_path / "remove.txt"
+
+    output_path.mkdir()
+    removal_path.write_text(
+        "protected",
+        encoding="utf-8",
+    )
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        removals=[
+            PlannedRemoval(
+                path=removal_path,
+                relative_path="remove.txt",
+                module="example",
+                reason="replace",
+            )
+        ],
+    )
+
+    original_unlink = Path.unlink
+
+    def fail_removal(path, *args, **kwargs):
+        if path == removal_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        Path,
+        "unlink",
+        fail_removal,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == "remove_path"
+    assert error.context["errno"] == 13
+    assert removal_path.exists() is True
