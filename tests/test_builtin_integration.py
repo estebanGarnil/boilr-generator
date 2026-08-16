@@ -9,6 +9,8 @@ from boilr_generator.manifest import (
 )
 from boilr_generator.resolver import Resolver
 
+from boilr_generator.generation import ProjectGenerator
+
 
 def build_integration_manifest(valid_manifest_data):
     return load_project_manifest_from_dict(
@@ -139,6 +141,49 @@ def test_django_postgres_integration_resolves_declaratively(
     assert django is not None
     assert "postgres" not in django.manifest.dependencies
     assert "mysql" not in django.manifest.dependencies
+
+def test_django_postgres_integration_generates_driver(
+    registry,
+    valid_manifest_data,
+    tmp_path,
+):
+    manifest = build_integration_manifest(
+        valid_manifest_data
+    )
+
+    output_path = tmp_path / "generated"
+    generator = ProjectGenerator(registry)
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+    generator.execute(plan)
+
+    requirements = (
+        output_path
+        / "backend"
+        / "requirements.txt"
+    ).read_text(encoding="utf-8")
+
+    assert "psycopg[binary]" in (
+        line.strip()
+        for line in requirements.splitlines()
+    )
+
+    settings = (
+        output_path
+        / "backend"
+        / "config"
+        / "settings"
+        / "base.py"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        '"ENGINE": "django.db.backends.postgresql"'
+        in settings
+    )
 
 def test_django_rejects_missing_database_integration(
     registry,
