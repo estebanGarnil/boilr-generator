@@ -1,5 +1,6 @@
 """Environment variable generation."""
 
+import re
 from typing import Any
 
 from jinja2 import Environment, StrictUndefined
@@ -8,6 +9,7 @@ from jinja2.exceptions import TemplateError
 from boilr_generator.core.project import ResolvedProject
 from boilr_generator.exceptions import (
     EnvironmentConflictError,
+    InvalidEnvironmentVariableError,
     TemplateRenderError,
 )
 from boilr_generator.generation.context import (
@@ -18,6 +20,16 @@ JINJA_ENVIRONMENT = Environment(
     autoescape=False,
     undefined=StrictUndefined,
 )
+
+ENV_VARIABLE_NAME_PATTERN = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*$"
+)
+
+FORBIDDEN_VALUE_CHARACTERS = {
+    "\n": "line_feed",
+    "\r": "carriage_return",
+    "\x00": "null_byte",
+}
 
 
 class EnvGenerator:
@@ -44,9 +56,23 @@ class EnvGenerator:
 
             for key, value in exports.env.root.items():
                 field_path = f"modules.{module.key}.exports.env.{key}"
+
+                self._validate_variable_name(
+                    key=key,
+                    module_key=module.key,
+                    field_path=field_path,
+                )
+
                 rendered_value = self._render_value(
                     value,
                     context,
+                    module_key=module.key,
+                    field_path=field_path,
+                )
+
+                self._validate_variable_value(
+                    key=key,
+                    value=rendered_value,
                     module_key=module.key,
                     field_path=field_path,
                 )
@@ -76,6 +102,72 @@ class EnvGenerator:
                     variable_origins[key] = module.key
 
         return env
+
+    def _validate_variable_name(
+        self,
+        *,
+        key: str,
+        module_key: str,
+        field_path: str,
+    ) -> None:
+        """Validate a portable environment variable name."""
+        if ENV_VARIABLE_NAME_PATTERN.fullmatch(key):
+            return
+
+        raise InvalidEnvironmentVariableError(
+            f"Invalid environment variable name: '{key}'.",
+            module_key=module_key,
+            field_path=field_path,
+            context={
+                "reason": "invalid_name",
+                "variable": key,
+                "expected_pattern": (
+                    ENV_VARIABLE_NAME_PATTERN.pattern
+                ),
+            },
+            suggestion=(
+                "Use letters, digits, and underscores, starting "
+                "with a letter or underscore."
+            ),
+        )
+
+    def _validate_variable_value(
+        self,
+        *,
+        key: str,
+        value: str,
+        module_key: str,
+        field_path: str,
+    ) -> None:
+        """Reject values that could inject additional env lines."""
+        invalid_characters = [
+            character_name
+            for character, character_name in (
+                FORBIDDEN_VALUE_CHARACTERS.items()
+            )
+            if character in value
+        ]
+
+        if not invalid_characters:
+            return
+
+        raise InvalidEnvironmentVariableError(
+            (
+                f"Environment variable '{key}' contains "
+                "characters that cannot be serialized safely."
+            ),
+            module_key=module_key,
+            field_path=field_path,
+            context={
+                "reason": "invalid_value",
+                "variable": key,
+                "invalid_characters": invalid_characters,
+            },
+            suggestion=(
+                "Remove line breaks and null bytes from the "
+                "environment variable value."
+            ),
+        )
 
     def _render_value(
         self,

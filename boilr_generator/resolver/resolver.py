@@ -37,7 +37,9 @@ class Resolver:
         resolved_modules = self._resolve_modules(manifest)
 
         self.validator.validate_variables(resolved_modules)
+        self.validator.validate_options(resolved_modules)
         self.validator.validate_variable_types(resolved_modules)
+        self.validator.validate_option_types(resolved_modules)
 
         providers = self.capability_collector.collect_providers(
             resolved_modules

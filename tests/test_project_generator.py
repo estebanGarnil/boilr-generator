@@ -1,12 +1,18 @@
+import shutil
+from pathlib import Path
 
 import pytest
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
+    PlannedFile,
     PlannedRemoval,
 )
 from boilr_generator.exceptions import (
     FileConflictError,
+    OutputDirectoryError,
     SourceNotFoundError,
+    SourceReadError,
+    UnsafePathError,
 )
 from boilr_generator.generation import ProjectGenerator
 from boilr_generator.modules.schemas import (
@@ -664,7 +670,7 @@ def test_execute_rejects_unsafe_removal(
     )
 
     with pytest.raises(
-        FileConflictError
+        UnsafePathError
     ) as error_info:
         ProjectGenerator(registry).execute(plan)
 
@@ -677,3 +683,854 @@ def test_execute_rejects_unsafe_removal(
         outside_path
     )
     assert protected_file.exists() is True
+
+def test_copy_source_cannot_escape_module_directory(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    outside_file = tmp_path / "outside.txt"
+
+    module_path.mkdir()
+    outside_file.write_text("protected", encoding="utf-8")
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError) as error_info:
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "../outside.txt",
+                    "to": "generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+    error = error_info.value
+
+    assert error.code == "unsafe_path"
+    assert error.context["reason"] == "unsafe_source"
+    assert error.context["source_path"]
+    assert outside_file.read_text(encoding="utf-8") == (
+        "protected"
+    )
+
+
+def test_render_source_cannot_escape_module_directory(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    outside_template = tmp_path / "outside.j2"
+
+    module_path.mkdir()
+    outside_template.write_text("protected", encoding="utf-8")
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError) as error_info:
+        generator._plan_render_source(
+            module_key="example",
+            module_path=module_path,
+            source=RenderSource.model_validate(
+                {
+                    "from": "../outside.j2",
+                    "to": "generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.render[0].from"
+            ),
+            context={},
+        )
+
+    assert error_info.value.context["reason"] == (
+        "unsafe_source"
+    )
+
+
+def test_copy_destination_cannot_escape_output_directory(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    source_file = module_path / "source.txt"
+
+    module_path.mkdir()
+    source_file.write_text("content", encoding="utf-8")
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError) as error_info:
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "source.txt",
+                    "to": "../outside.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+    error = error_info.value
+
+    assert error.context["reason"] == "unsafe_destination"
+    assert error.field_path == (
+        "modules.example.sources.copy[0].to"
+    )
+
+
+def test_render_destination_cannot_be_absolute(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    source_file = module_path / "template.j2"
+    outside_file = tmp_path / "outside.txt"
+
+    module_path.mkdir()
+    source_file.write_text("content", encoding="utf-8")
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError) as error_info:
+        generator._plan_render_source(
+            module_key="example",
+            module_path=module_path,
+            source=RenderSource.model_validate(
+                {
+                    "from": "template.j2",
+                    "to": str(outside_file),
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.render[0].from"
+            ),
+            context={},
+        )
+
+    error = error_info.value
+
+    assert error.context["reason"] == "unsafe_destination"
+    assert error.field_path == (
+        "modules.example.sources.render[0].to"
+    )
+
+
+def test_execute_rejects_unsafe_file_destination(
+    registry,
+    resolved_project,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    outside_file = tmp_path / "outside.txt"
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        files=[
+            PlannedFile(
+                source_path=None,
+                destination_path=outside_file,
+                relative_destination_path="../outside.txt",
+                operation="generate",
+                action="create",
+                content=b"unsafe",
+            )
+        ],
+    )
+
+    with pytest.raises(UnsafePathError) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    assert error_info.value.context["reason"] == (
+        "unsafe_destination"
+    )
+    assert outside_file.exists() is False
+
+
+def test_source_symbolic_link_cannot_escape_module(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    outside_file = tmp_path / "outside.txt"
+    linked_file = module_path / "linked.txt"
+
+    module_path.mkdir()
+    outside_file.write_text("protected", encoding="utf-8")
+
+    try:
+        linked_file.symlink_to(outside_file)
+    except (NotImplementedError, OSError):
+        pytest.skip(
+            "Symbolic links are not available on this system."
+        )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError):
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "linked.txt",
+                    "to": "generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+
+def test_destination_symbolic_link_cannot_escape_output(
+    registry,
+    tmp_path,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    outside_directory = tmp_path / "outside"
+    linked_directory = output_path / "linked"
+    source_file = module_path / "template.j2"
+
+    module_path.mkdir()
+    output_path.mkdir()
+    outside_directory.mkdir()
+    source_file.write_text("content", encoding="utf-8")
+
+    try:
+        linked_directory.symlink_to(
+            outside_directory,
+            target_is_directory=True,
+        )
+    except (NotImplementedError, OSError):
+        pytest.skip(
+            "Symbolic links are not available on this system."
+        )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(UnsafePathError):
+        generator._plan_render_source(
+            module_key="example",
+            module_path=module_path,
+            source=RenderSource.model_validate(
+                {
+                    "from": "template.j2",
+                    "to": "linked/generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.render[0].from"
+            ),
+            context={},
+        )
+
+@pytest.mark.parametrize(
+    "protected_path",
+    [
+        Path.cwd(),
+        Path.home(),
+    ],
+)
+def test_clean_plan_rejects_protected_directory(
+    registry,
+    manifest,
+    protected_path,
+):
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.plan(
+            manifest=manifest,
+            output_path=protected_path,
+            clean=True,
+        )
+
+    error = error_info.value
+
+    assert error.code == "output_directory_error"
+    assert error.field_path == "generation.output_path"
+    assert error.context["reason"]
+    assert error.suggestion is not None
+
+
+def test_clean_plan_rejects_filesystem_root(
+    registry,
+    manifest,
+    tmp_path,
+):
+    filesystem_root = Path(tmp_path.anchor)
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.plan(
+            manifest=manifest,
+            output_path=filesystem_root,
+            clean=True,
+        )
+
+    assert error_info.value.context["reason"] == (
+        "filesystem_root"
+    )
+
+
+def test_clean_plan_rejects_output_file(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "output.txt"
+    output_path.write_text(
+        "protected",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.plan(
+            manifest=manifest,
+            output_path=output_path,
+            clean=True,
+        )
+
+    assert error_info.value.context["reason"] == (
+        "output_is_not_directory"
+    )
+    assert output_path.read_text(encoding="utf-8") == (
+        "protected"
+    )
+
+
+def test_clean_plan_rejects_symbolic_link(
+    registry,
+    manifest,
+    tmp_path,
+):
+    target_path = tmp_path / "target"
+    output_path = tmp_path / "output-link"
+
+    target_path.mkdir()
+
+    try:
+        output_path.symlink_to(
+            target_path,
+            target_is_directory=True,
+        )
+    except (NotImplementedError, OSError):
+        pytest.skip(
+            "Symbolic links are not available on this system."
+        )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.plan(
+            manifest=manifest,
+            output_path=output_path,
+            clean=True,
+        )
+
+    assert error_info.value.context["reason"] == (
+        "output_is_symbolic_link"
+    )
+    assert target_path.exists() is True
+
+
+def test_clean_plan_accepts_dedicated_output_directory(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "generated-project"
+    generator = ProjectGenerator(registry)
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    assert plan.clean_output is True
+    assert plan.output_path == output_path
+    assert output_path.exists() is False
+
+
+def test_execute_revalidates_clean_output_directory(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    protected_path = tmp_path / "protected"
+    protected_path.mkdir()
+
+    protected_file = protected_path / "keep.txt"
+    protected_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        Path,
+        "cwd",
+        classmethod(lambda cls: protected_path),
+    )
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=protected_path,
+        clean_output=True,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    assert error_info.value.context["reason"] == (
+        "current_working_directory"
+    )
+    assert protected_file.exists() is True
+
+def test_copy_source_wraps_file_read_error(
+    registry,
+    tmp_path,
+    monkeypatch,
+):
+    module_path = tmp_path / "module"
+    output_path = tmp_path / "output"
+    source_path = module_path / "source.txt"
+
+    module_path.mkdir()
+    source_path.write_text("content", encoding="utf-8")
+
+    original_read_bytes = Path.read_bytes
+
+    def fail_source_read(path):
+        if path == source_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        fail_source_read,
+    )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(SourceReadError) as error_info:
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "source.txt",
+                    "to": "generated.txt",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == (
+        "read_copy_source"
+    )
+    assert error.context["errno"] == 13
+
+
+def test_copy_source_wraps_directory_listing_error(
+    registry,
+    tmp_path,
+    monkeypatch,
+):
+    module_path = tmp_path / "module"
+    source_path = module_path / "source"
+    output_path = tmp_path / "output"
+
+    source_path.mkdir(parents=True)
+
+    original_rglob = Path.rglob
+
+    def fail_source_listing(path, pattern):
+        if path == source_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_rglob(path, pattern)
+
+    monkeypatch.setattr(
+        Path,
+        "rglob",
+        fail_source_listing,
+    )
+
+    generator = ProjectGenerator(registry)
+
+    with pytest.raises(SourceReadError) as error_info:
+        generator._plan_copy_source(
+            module_key="example",
+            module_path=module_path,
+            source=CopySource.model_validate(
+                {
+                    "from": "source",
+                    "to": "generated",
+                }
+            ),
+            output_path=output_path,
+            field_path=(
+                "modules.example.sources.copy[0].from"
+            ),
+            clean=False,
+        )
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == (
+        "list_directory"
+    )
+    assert error.context["errno"] == 13
+
+def test_execute_wraps_clean_removal_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    protected_file = output_path / "protected.txt"
+    protected_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    original_rmtree = shutil.rmtree
+
+    def fail_clean(path, *args, **kwargs):
+        if Path(path) == output_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        shutil,
+        "rmtree",
+        fail_clean,
+    )
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        clean_output=True,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == "clean_output"
+    assert error.context["errno"] == 13
+    assert protected_file.exists() is True
+
+
+def test_execute_wraps_output_directory_creation_error(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(manifest, output_path)
+
+    original_mkdir = Path.mkdir
+
+    def fail_output_creation(path, *args, **kwargs):
+        if path == output_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        Path,
+        "mkdir",
+        fail_output_creation,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        generator.execute(plan)
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == (
+        "create_output_directory"
+    )
+    assert error.context["errno"] == 13
+
+
+def test_execute_wraps_parent_directory_creation_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    destination_path = (
+        output_path / "nested" / "generated.txt"
+    )
+    nested_path = destination_path.parent
+
+    output_path.mkdir()
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        files=[
+            PlannedFile(
+                source_path=None,
+                destination_path=destination_path,
+                relative_destination_path=(
+                    "nested/generated.txt"
+                ),
+                operation="generate",
+                action="create",
+                content=b"content",
+            )
+        ],
+    )
+
+    original_mkdir = Path.mkdir
+
+    def fail_parent_creation(path, *args, **kwargs):
+        if path == nested_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        Path,
+        "mkdir",
+        fail_parent_creation,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    assert error_info.value.context["operation"] == (
+        "create_parent_directory"
+    )
+    assert destination_path.exists() is False
+
+
+def test_execute_wraps_file_write_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    destination_path = output_path / "generated.txt"
+
+    output_path.mkdir()
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        files=[
+            PlannedFile(
+                source_path=None,
+                destination_path=destination_path,
+                relative_destination_path="generated.txt",
+                operation="generate",
+                action="create",
+                content=b"content",
+            )
+        ],
+    )
+
+    original_write_bytes = Path.write_bytes
+
+    def fail_file_write(path, data):
+        if path == destination_path:
+            raise OSError(28, "No space left on device")
+
+        return original_write_bytes(path, data)
+
+    monkeypatch.setattr(
+        Path,
+        "write_bytes",
+        fail_file_write,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, OSError)
+    assert error.context["operation"] == "write_file"
+    assert error.context["errno"] == 28
+    assert destination_path.exists() is False
+
+
+def test_execute_wraps_file_mode_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    destination_path = output_path / "generated.txt"
+
+    output_path.mkdir()
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        files=[
+            PlannedFile(
+                source_path=None,
+                destination_path=destination_path,
+                relative_destination_path="generated.txt",
+                operation="generate",
+                action="create",
+                content=b"content",
+                mode=0o644,
+            )
+        ],
+    )
+
+    original_chmod = Path.chmod
+
+    def fail_file_mode(path, mode):
+        if path == destination_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(
+        Path,
+        "chmod",
+        fail_file_mode,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert error.context["operation"] == "set_file_mode"
+    assert error.context["errno"] == 13
+    assert destination_path.exists() is True
+
+
+def test_execute_wraps_planned_removal_error(
+    registry,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    removal_path = output_path / "remove.txt"
+
+    output_path.mkdir()
+    removal_path.write_text(
+        "protected",
+        encoding="utf-8",
+    )
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+        removals=[
+            PlannedRemoval(
+                path=removal_path,
+                relative_path="remove.txt",
+                module="example",
+                reason="replace",
+            )
+        ],
+    )
+
+    original_unlink = Path.unlink
+
+    def fail_removal(path, *args, **kwargs):
+        if path == removal_path:
+            raise PermissionError(13, "Access denied")
+
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        Path,
+        "unlink",
+        fail_removal,
+    )
+
+    with pytest.raises(
+        OutputDirectoryError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert isinstance(error.__cause__, PermissionError)
+    assert error.context["operation"] == "remove_path"
+    assert error.context["errno"] == 13
+    assert removal_path.exists() is True
