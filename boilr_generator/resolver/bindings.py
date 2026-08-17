@@ -88,20 +88,6 @@ class CapabilityBinder:
                 )
 
 
-                # for candidate in candidates:
-                #     self._validate_provider_version(
-                #         requirement=requirement,
-                #         provider=candidate,
-                #         version_specifier=(
-                #             selection.version_specifier
-                #         ),
-                #     )
-                #     self._validate_provider_tags(
-                #         requirement=requirement,
-                #         provider=candidate,
-                #         required_tags=selection.required_tags,
-                #     )
-
             if not candidates:
                 if requirement.optional:
                     continue
