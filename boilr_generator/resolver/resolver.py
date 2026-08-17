@@ -1,6 +1,9 @@
 """Project manifest resolver."""
 
-from boilr_generator.core import ResolvedModule
+from boilr_generator.core import (
+    CapabilityProviderSelection,
+    ResolvedModule,
+)
 from boilr_generator.core.project import ResolvedProject
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
@@ -52,7 +55,10 @@ class Resolver:
 
         provider_selections = {
             project_module.key: {
-                binding_key: selection.provider
+                binding_key: CapabilityProviderSelection(
+                    provider_module_key=selection.provider,
+                    version_specifier=selection.version,
+                )
                 for binding_key, selection
                 in project_module.bindings.items()
             }

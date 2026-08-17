@@ -14,6 +14,16 @@ class CapabilityProvider(BaseModel):
     values: dict[str, Any] = Field(default_factory=dict)
 
 
+class CapabilityProviderSelection(BaseModel):
+    """Normalized explicit provider selection."""
+
+    provider_module_key: str = Field(min_length=1)
+    version_specifier: str | None = Field(
+        default=None,
+        min_length=1,
+    )
+
+
 class CapabilityRequirement(BaseModel):
     """Represents one capability required by a module."""
 

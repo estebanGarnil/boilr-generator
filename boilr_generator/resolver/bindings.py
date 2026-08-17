@@ -3,9 +3,16 @@
 from collections.abc import Mapping
 from copy import deepcopy
 
+from packaging.specifiers import (
+    InvalidSpecifier,
+    SpecifierSet,
+)
+from packaging.version import InvalidVersion, Version
+
 from boilr_generator.core.capabilities import (
     CapabilityBinding,
     CapabilityProvider,
+    CapabilityProviderSelection,
     CapabilityRequirement,
 )
 from boilr_generator.exceptions import (
@@ -33,7 +40,10 @@ class CapabilityBinder:
         *,
         provider_selections: Mapping[
             str,
-            Mapping[str, str],
+            Mapping[
+                str,
+                CapabilityProviderSelection,
+            ],
         ]
         | None = None,
         selected_module_keys: set[str] | None = None,
@@ -63,19 +73,30 @@ class CapabilityBinder:
                 if provider.capability == requirement.capability
             ]
 
-            selected_provider = selections.get(
+            selection = selections.get(
                 requirement.module_key,
                 {},
             ).get(requirement.binding_key)
 
-            if selected_provider is not None:
+            if selection is not None:
                 candidates = self._select_explicit_provider(
                     requirement=requirement,
-                    provider_module_key=selected_provider,
+                    provider_module_key=(
+                        selection.provider_module_key
+                    ),
                     candidates=candidates,
                     providers=providers,
                     selected_module_keys=available_module_keys,
                 )
+
+                for candidate in candidates:
+                    self._validate_provider_version(
+                        requirement=requirement,
+                        provider=candidate,
+                        version_specifier=(
+                            selection.version_specifier
+                        ),
+                    )
 
             if not candidates:
                 if requirement.optional:
@@ -159,7 +180,10 @@ class CapabilityBinder:
         requirements: list[CapabilityRequirement],
         provider_selections: Mapping[
             str,
-            Mapping[str, str],
+            Mapping[
+                str,
+                CapabilityProviderSelection,
+            ],
         ],
     ) -> None:
         """Reject selections targeting undeclared bindings."""
@@ -179,9 +203,7 @@ class CapabilityBinder:
                 set(),
             )
 
-            for binding_key, provider_module in (
-                selections.items()
-            ):
+            for binding_key, selection in selections.items():
                 if binding_key in available_bindings:
                     continue
 
@@ -198,7 +220,9 @@ class CapabilityBinder:
                     context={
                         "reason": "unknown_binding",
                         "binding_key": binding_key,
-                        "provider_module": provider_module,
+                        "provider_module": (
+                            selection.provider_module_key
+                        ),
                         "available_bindings": sorted(
                             available_bindings
                         ),
@@ -284,6 +308,94 @@ class CapabilityBinder:
             suggestion=(
                 "Select a module providing capability "
                 f"'{requirement.capability}'."
+            ),
+        )
+
+    def _validate_provider_version(
+        self,
+        *,
+        requirement: CapabilityRequirement,
+        provider: CapabilityProvider,
+        version_specifier: str | None,
+    ) -> None:
+        """Validate a provider version against the selection."""
+        if version_specifier is None:
+            return
+
+        field_path = (
+            f"modules.{requirement.module_key}."
+            f"bindings.{requirement.binding_key}.version"
+        )
+
+        try:
+            accepted_versions = SpecifierSet(
+                version_specifier
+            )
+        except InvalidSpecifier as error:
+            raise ProviderSelectionError(
+                (
+                    f"Version constraint '{version_specifier}' "
+                    "is invalid."
+                ),
+                module_key=requirement.module_key,
+                field_path=field_path,
+                context={
+                    "reason": "invalid_version_constraint",
+                    "binding_key": requirement.binding_key,
+                    "provider_module": provider.module_key,
+                    "version_constraint": version_specifier,
+                },
+                suggestion=(
+                    "Use a valid PEP 440 constraint, such as "
+                    "'>=16,<18'."
+                ),
+            ) from error
+
+        try:
+            provider_version = Version(provider.version)
+        except InvalidVersion as error:
+            raise ProviderSelectionError(
+                (
+                    f"Provider '{provider.module_key}' declares "
+                    f"invalid version '{provider.version}'."
+                ),
+                module_key=requirement.module_key,
+                field_path=field_path,
+                context={
+                    "reason": "invalid_provider_version",
+                    "binding_key": requirement.binding_key,
+                    "provider_module": provider.module_key,
+                    "provider_version": provider.version,
+                    "version_constraint": version_specifier,
+                },
+                suggestion=(
+                    "Correct the provider module version so that "
+                    "it follows PEP 440."
+                ),
+            ) from error
+
+        if provider_version in accepted_versions:
+            return
+
+        raise ProviderSelectionError(
+            (
+                f"Provider '{provider.module_key}' version "
+                f"'{provider.version}' does not satisfy "
+                f"constraint '{version_specifier}'."
+            ),
+            module_key=requirement.module_key,
+            field_path=field_path,
+            context={
+                "reason": "version_mismatch",
+                "binding_key": requirement.binding_key,
+                "capability": requirement.capability,
+                "provider_module": provider.module_key,
+                "provider_version": provider.version,
+                "version_constraint": version_specifier,
+            },
+            suggestion=(
+                "Select a compatible provider version or change "
+                "the requested version constraint."
             ),
         )
 
