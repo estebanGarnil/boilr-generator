@@ -1,10 +1,15 @@
 from typing import Annotated, Any
 
+from packaging.specifiers import (
+    InvalidSpecifier,
+    SpecifierSet,
+)
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     StringConstraints,
+    field_validator,
     model_validator,
 )
 
@@ -41,6 +46,30 @@ class ProjectBindingSelection(BaseModel):
         min_length=1,
         strict=True,
     )
+
+    version: str | None = Field(
+        default=None,
+        min_length=1,
+        strict=True,
+    )
+
+    @field_validator("version")
+    @classmethod
+    def validate_version_specifier(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        try:
+            SpecifierSet(value)
+        except InvalidSpecifier as error:
+            raise ValueError(
+                "Invalid provider version constraint."
+            ) from error
+
+        return value
 
 
 class ProjectModule(BaseModel):

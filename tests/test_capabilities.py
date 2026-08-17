@@ -10,6 +10,7 @@ def test_capability_domain_models_store_resolution_data():
     provider = CapabilityProvider(
         module_key="postgres",
         capability="database.connection",
+        version="1.0.0",
         values={
             "host": "db",
             "port": 5432,
@@ -36,6 +37,7 @@ def test_capability_domain_models_store_resolution_data():
     assert provider.module_key == "postgres"
     assert provider.capability == "database.connection"
     assert provider.values["port"] == 5432
+    assert provider.version == "1.0.0"
 
     assert requirement.module_key == "django"
     assert requirement.binding_key == "primary_database"
@@ -71,6 +73,7 @@ def test_resolved_project_queries_capability_relationships(
     provider = CapabilityProvider(
         module_key="postgres",
         capability="database.connection",
+        version="1.0.0",
         values={
             "host": "db",
         },

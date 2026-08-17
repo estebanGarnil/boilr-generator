@@ -20,10 +20,12 @@ def make_provider(
     module_key,
     *,
     host="db",
+    version="1.0.0",
 ):
     return CapabilityProvider(
         module_key=module_key,
         capability="database.connection",
+        version=version,
         values={
             "host": host,
             "port": 5432,
@@ -450,6 +452,7 @@ def test_binder_rejects_provider_capability_mismatch():
         CapabilityProvider(
             module_key="redis",
             capability="cache.connection",
+            version="1.0.0",
             values={},
         ),
     ]

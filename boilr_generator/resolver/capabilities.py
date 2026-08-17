@@ -64,6 +64,7 @@ class CapabilityCollector:
                     CapabilityProvider(
                         module_key=module.key,
                         capability=provision.capability,
+                        version=module.manifest.meta.version,
                         values=values,
                     )
                 )
