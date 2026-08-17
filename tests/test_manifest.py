@@ -399,3 +399,59 @@ def test_manifest_rejects_invalid_provider_tags(
     assert error.context["errors"][0]["type"] == (
         expected_error_type
     )
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {
+            "version": ">=17,<18",
+        },
+        {
+            "tags": [
+                "managed",
+                "cloud",
+            ],
+        },
+    ],
+)
+def test_manifest_loads_selection_without_provider(
+    valid_manifest_data,
+    selection,
+):
+    valid_manifest_data["modules"][1]["bindings"] = {
+        "primary_database": selection
+    }
+
+    manifest = load_project_manifest_from_dict(
+        valid_manifest_data
+    )
+
+    django = manifest.get_module("django")
+
+    assert django is not None
+    assert (
+        django.bindings["primary_database"].provider
+        is None
+    )
+
+
+def test_manifest_rejects_empty_provider_selection(
+    valid_manifest_data,
+):
+    valid_manifest_data["modules"][1]["bindings"] = {
+        "primary_database": {}
+    }
+
+    with pytest.raises(ManifestSchemaError) as error_info:
+        load_project_manifest_from_dict(
+            valid_manifest_data
+        )
+
+    error = error_info.value
+
+    assert error.field_path == (
+        "modules.1.bindings.primary_database"
+    )
+    assert error.context["errors"][0]["type"] == (
+        "value_error"
+    )

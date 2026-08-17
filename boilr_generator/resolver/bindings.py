@@ -79,29 +79,28 @@ class CapabilityBinder:
             ).get(requirement.binding_key)
 
             if selection is not None:
-                candidates = self._select_explicit_provider(
+                candidates = self._apply_provider_selection(
                     requirement=requirement,
-                    provider_module_key=(
-                        selection.provider_module_key
-                    ),
+                    selection=selection,
                     candidates=candidates,
                     providers=providers,
                     selected_module_keys=available_module_keys,
                 )
 
-                for candidate in candidates:
-                    self._validate_provider_version(
-                        requirement=requirement,
-                        provider=candidate,
-                        version_specifier=(
-                            selection.version_specifier
-                        ),
-                    )
-                    self._validate_provider_tags(
-                        requirement=requirement,
-                        provider=candidate,
-                        required_tags=selection.required_tags,
-                    )
+
+                # for candidate in candidates:
+                #     self._validate_provider_version(
+                #         requirement=requirement,
+                #         provider=candidate,
+                #         version_specifier=(
+                #             selection.version_specifier
+                #         ),
+                #     )
+                #     self._validate_provider_tags(
+                #         requirement=requirement,
+                #         provider=candidate,
+                #         required_tags=selection.required_tags,
+                #     )
 
             if not candidates:
                 if requirement.optional:
@@ -191,7 +190,7 @@ class CapabilityBinder:
             ],
         ],
     ) -> None:
-        """Reject selections targeting undeclared bindings."""
+        """Reject invalid or empty provider selections."""
         bindings_by_module: dict[str, set[str]] = {}
 
         for requirement in requirements:
@@ -209,34 +208,161 @@ class CapabilityBinder:
             )
 
             for binding_key, selection in selections.items():
-                if binding_key in available_bindings:
-                    continue
+                field_path = (
+                    f"modules.{module_key}."
+                    f"bindings.{binding_key}"
+                )
 
-                raise ProviderSelectionError(
-                    (
-                        f"Module '{module_key}' selects a provider "
-                        f"for unknown binding '{binding_key}'."
-                    ),
-                    module_key=module_key,
-                    field_path=(
-                        f"modules.{module_key}."
-                        f"bindings.{binding_key}"
-                    ),
-                    context={
-                        "reason": "unknown_binding",
-                        "binding_key": binding_key,
-                        "provider_module": (
-                            selection.provider_module_key
+                if binding_key not in available_bindings:
+                    raise ProviderSelectionError(
+                        (
+                            f"Module '{module_key}' selects a "
+                            "provider for unknown binding "
+                            f"'{binding_key}'."
                         ),
-                        "available_bindings": sorted(
-                            available_bindings
+                        module_key=module_key,
+                        field_path=field_path,
+                        context={
+                            "reason": "unknown_binding",
+                            "binding_key": binding_key,
+                            "provider_module": (
+                                selection.provider_module_key
+                            ),
+                            "available_bindings": sorted(
+                                available_bindings
+                            ),
+                        },
+                        suggestion=(
+                            "Remove this selection or use a "
+                            "binding declared by the consumer "
+                            "module."
                         ),
-                    },
-                    suggestion=(
-                        "Remove this selection or use a binding "
-                        "declared by the consumer module."
+                    )
+
+                if (
+                    selection.provider_module_key is None
+                    and selection.version_specifier is None
+                    and not selection.required_tags
+                ):
+                    raise ProviderSelectionError(
+                        (
+                            f"Provider selection '{binding_key}' "
+                            "does not contain any criterion."
+                        ),
+                        module_key=module_key,
+                        field_path=field_path,
+                        context={
+                            "reason": "empty_selection",
+                            "binding_key": binding_key,
+                        },
+                        suggestion=(
+                            "Define provider, version, or tags, "
+                            "or remove the empty selection."
+                        ),
+                    )
+
+    def _apply_provider_selection(
+        self,
+        *,
+        requirement: CapabilityRequirement,
+        selection: CapabilityProviderSelection,
+        candidates: list[CapabilityProvider],
+        providers: list[CapabilityProvider],
+        selected_module_keys: set[str],
+    ) -> list[CapabilityProvider]:
+        """Filter capability providers using explicit criteria."""
+        if selection.provider_module_key is not None:
+            selected_candidates = (
+                self._select_explicit_provider(
+                    requirement=requirement,
+                    provider_module_key=(
+                        selection.provider_module_key
+                    ),
+                    candidates=candidates,
+                    providers=providers,
+                    selected_module_keys=selected_module_keys,
+                )
+            )
+
+            for candidate in selected_candidates:
+                self._validate_provider_version(
+                    requirement=requirement,
+                    provider=candidate,
+                    version_specifier=(
+                        selection.version_specifier
                     ),
                 )
+                self._validate_provider_tags(
+                    requirement=requirement,
+                    provider=candidate,
+                    required_tags=selection.required_tags,
+                )
+
+            return selected_candidates
+
+        matching_candidates: list[
+            CapabilityProvider
+        ] = []
+
+        for candidate in candidates:
+            try:
+                self._validate_provider_version(
+                    requirement=requirement,
+                    provider=candidate,
+                    version_specifier=(
+                        selection.version_specifier
+                    ),
+                )
+                self._validate_provider_tags(
+                    requirement=requirement,
+                    provider=candidate,
+                    required_tags=selection.required_tags,
+                )
+            except ProviderSelectionError as error:
+                if error.context.get("reason") in {
+                    "version_mismatch",
+                    "tag_mismatch",
+                }:
+                    continue
+
+                raise
+
+            matching_candidates.append(candidate)
+
+        if matching_candidates:
+            return matching_candidates
+
+        raise ProviderSelectionError(
+            (
+                f"No provider matches the selection for binding "
+                f"'{requirement.binding_key}' of module "
+                f"'{requirement.module_key}'."
+            ),
+            module_key=requirement.module_key,
+            field_path=(
+                f"modules.{requirement.module_key}."
+                f"bindings.{requirement.binding_key}"
+            ),
+            context={
+                "reason": "no_matching_provider",
+                "binding_key": requirement.binding_key,
+                "capability": requirement.capability,
+                "version_constraint": (
+                    selection.version_specifier
+                ),
+                "required_tags": sorted(
+                    selection.required_tags
+                ),
+                "candidate_modules": sorted(
+                    candidate.module_key
+                    for candidate in candidates
+                ),
+            },
+            suggestion=(
+                "Change the version or tag criteria, add a "
+                "compatible provider, or select one explicitly."
+            ),
+        )
 
     def _select_explicit_provider(
         self,

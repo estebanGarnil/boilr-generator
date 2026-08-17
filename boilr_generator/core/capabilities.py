@@ -18,7 +18,10 @@ class CapabilityProvider(BaseModel):
 class CapabilityProviderSelection(BaseModel):
     """Normalized explicit provider selection."""
 
-    provider_module_key: str = Field(min_length=1)
+    provider_module_key: str | None = Field(
+        default=None,
+        min_length=1,
+    )
     version_specifier: str | None = Field(
         default=None,
         min_length=1,

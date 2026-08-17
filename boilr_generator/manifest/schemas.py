@@ -51,7 +51,8 @@ class ProjectBindingSelection(BaseModel):
         str_strip_whitespace=True,
     )
 
-    provider: str = Field(
+    provider: str | None = Field(
+        default=None,
         min_length=1,
         strict=True,
     )
@@ -65,6 +66,22 @@ class ProjectBindingSelection(BaseModel):
     tags: list[ProviderTag] = Field(
         default_factory=list
     )
+
+    @model_validator(mode="after")
+    def validate_non_empty_selection(
+        self,
+    ) -> "ProjectBindingSelection":
+        if (
+            self.provider is None
+            and self.version is None
+            and not self.tags
+        ):
+            raise ValueError(
+                "A provider selection must define at least "
+                "one criterion."
+            )
+
+        return self
 
     @field_validator("version")
     @classmethod
