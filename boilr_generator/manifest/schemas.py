@@ -1,12 +1,21 @@
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
     model_validator,
 )
 
+BindingKey = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        strict=True,
+    ),
+]
 
 class ProjectInfo(BaseModel):
     model_config = ConfigDict(
@@ -18,6 +27,17 @@ class ProjectInfo(BaseModel):
     type: str = Field(min_length=1, strict=True)
     version: str = Field(
         default="1.0.0",
+        min_length=1,
+        strict=True,
+    )
+
+class ProjectBindingSelection(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    provider: str = Field(
         min_length=1,
         strict=True,
     )
@@ -36,6 +56,10 @@ class ProjectModule(BaseModel):
     options: dict[str, Any] = Field(
         default_factory=dict
     )
+    bindings: dict[
+        BindingKey,
+        ProjectBindingSelection,
+    ] = Field(default_factory=dict)
 
 
 class ProjectManifest(BaseModel):

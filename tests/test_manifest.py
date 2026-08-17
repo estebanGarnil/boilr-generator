@@ -179,3 +179,104 @@ def test_manifest_rejects_invalid_root_sections(
         )
 
     assert error_info.value.field_path == field
+
+def test_manifest_loads_explicit_provider_selection(
+    valid_manifest_data,
+):
+    valid_manifest_data["modules"][1]["bindings"] = {
+        "primary_database": {
+            "provider": "postgres",
+        }
+    }
+
+    manifest = load_project_manifest_from_dict(
+        valid_manifest_data
+    )
+
+    django = manifest.get_module("django")
+
+    assert django is not None
+    assert (
+        django.bindings["primary_database"].provider
+        == "postgres"
+    )
+
+
+@pytest.mark.parametrize(
+    ("bindings", "expected_path"),
+    [
+        (
+            [],
+            "modules.1.bindings",
+        ),
+        (
+            {
+                "primary_database": "postgres",
+            },
+            "modules.1.bindings.primary_database",
+        ),
+        (
+            {
+                "primary_database": {
+                    "provider": "   ",
+                },
+            },
+            (
+                "modules.1.bindings."
+                "primary_database.provider"
+            ),
+        ),
+        (
+            {
+                "primary_database": {
+                    "provider": "postgres",
+                    "unexpected": True,
+                },
+            },
+            (
+                "modules.1.bindings."
+                "primary_database.unexpected"
+            ),
+        ),
+    ],
+)
+def test_manifest_rejects_invalid_provider_selection(
+    valid_manifest_data,
+    bindings,
+    expected_path,
+):
+    valid_manifest_data["modules"][1][
+        "bindings"
+    ] = bindings
+
+    with pytest.raises(ManifestSchemaError) as error_info:
+        load_project_manifest_from_dict(
+            valid_manifest_data
+        )
+
+    assert error_info.value.field_path == expected_path
+
+
+def test_manifest_rejects_blank_binding_key(
+    valid_manifest_data,
+):
+    valid_manifest_data["modules"][1]["bindings"] = {
+        "   ": {
+            "provider": "postgres",
+        }
+    }
+
+    with pytest.raises(ManifestSchemaError) as error_info:
+        load_project_manifest_from_dict(
+            valid_manifest_data
+        )
+
+    error = error_info.value
+
+    assert error.field_path is not None
+    assert error.field_path.startswith(
+        "modules.1.bindings"
+    )
+    assert error.context["errors"][0]["type"] == (
+        "string_too_short"
+    )
