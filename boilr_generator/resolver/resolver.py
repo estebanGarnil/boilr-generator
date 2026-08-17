@@ -57,6 +57,7 @@ class Resolver:
             project_module.key: {
                 binding_key: CapabilityProviderSelection(
                     provider_module_key=selection.provider,
+                    required_tags=list(selection.tags),
                     version_specifier=selection.version,
                 )
                 for binding_key, selection

@@ -338,3 +338,64 @@ def test_manifest_rejects_invalid_provider_version_constraint(
     assert error.context["errors"][0]["type"] == (
         expected_error_type
     )
+
+def test_manifest_loads_provider_tags(
+    valid_manifest_data,
+):
+    valid_manifest_data["modules"][1]["bindings"] = {
+        "primary_database": {
+            "provider": "postgres",
+            "tags": [
+                "sql",
+                " relational ",
+            ],
+        }
+    }
+
+    manifest = load_project_manifest_from_dict(
+        valid_manifest_data
+    )
+
+    django = manifest.get_module("django")
+
+    assert django is not None
+    assert django.bindings["primary_database"].tags == [
+        "sql",
+        "relational",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected_error_type"),
+    [
+        (["sql", "   "], "string_too_short"),
+        (["sql", 17], "string_type"),
+        (["sql", "sql"], "value_error"),
+    ],
+)
+def test_manifest_rejects_invalid_provider_tags(
+    valid_manifest_data,
+    tags,
+    expected_error_type,
+):
+    valid_manifest_data["modules"][1]["bindings"] = {
+        "primary_database": {
+            "provider": "postgres",
+            "tags": tags,
+        }
+    }
+
+    with pytest.raises(ManifestSchemaError) as error_info:
+        load_project_manifest_from_dict(
+            valid_manifest_data
+        )
+
+    error = error_info.value
+
+    assert error.field_path.startswith(
+        "modules.1.bindings."
+        "primary_database.tags"
+    )
+    assert error.context["errors"][0]["type"] == (
+        expected_error_type
+    )

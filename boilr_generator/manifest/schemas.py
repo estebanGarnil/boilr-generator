@@ -22,6 +22,15 @@ BindingKey = Annotated[
     ),
 ]
 
+ProviderTag = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        strict=True,
+    ),
+]
+
 class ProjectInfo(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -53,6 +62,10 @@ class ProjectBindingSelection(BaseModel):
         strict=True,
     )
 
+    tags: list[ProviderTag] = Field(
+        default_factory=list
+    )
+
     @field_validator("version")
     @classmethod
     def validate_version_specifier(
@@ -68,6 +81,19 @@ class ProjectBindingSelection(BaseModel):
             raise ValueError(
                 "Invalid provider version constraint."
             ) from error
+
+        return value
+
+    @field_validator("tags")
+    @classmethod
+    def validate_unique_tags(
+        cls,
+        value: list[str],
+    ) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError(
+                "Duplicate provider tags are not allowed."
+            )
 
         return value
 

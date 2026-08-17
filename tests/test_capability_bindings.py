@@ -22,11 +22,13 @@ def make_provider(
     *,
     host="db",
     version="1.0.0",
+    tags=None,
 ):
     return CapabilityProvider(
         module_key=module_key,
         capability="database.connection",
         version=version,
+        tags=list(tags or []),
         values={
             "host": host,
             "port": 5432,
@@ -54,10 +56,12 @@ def make_selection(
     provider,
     *,
     version=None,
+    tags=None,
 ):
     return CapabilityProviderSelection(
         provider_module_key=provider,
         version_specifier=version,
+        required_tags=list(tags or []),
     )
 
 
@@ -662,3 +666,84 @@ def test_binder_rejects_invalid_direct_version_constraint():
         "invalid_version_constraint"
     )
     assert error.context["version_constraint"] == "latest"
+
+def test_binder_accepts_provider_with_required_tags():
+    provider = make_provider(
+        "postgres",
+        tags=[
+            "sql",
+            "relational",
+            "docker",
+        ],
+    )
+    requirement = make_requirement()
+
+    bindings = CapabilityBinder().bind(
+        [provider],
+        [requirement],
+        provider_selections={
+            "django": {
+                "primary_database": make_selection(
+                    "postgres",
+                    tags=[
+                        "relational",
+                        "docker",
+                    ],
+                ),
+            }
+        },
+        selected_module_keys={
+            "django",
+            "postgres",
+        },
+    )
+
+    assert len(bindings) == 1
+    assert bindings[0].provider_module_key == "postgres"
+
+
+def test_binder_rejects_provider_missing_required_tags():
+    provider = make_provider(
+        "postgres",
+        tags=[
+            "sql",
+            "relational",
+        ],
+    )
+    requirement = make_requirement()
+
+    with pytest.raises(
+        ProviderSelectionError
+    ) as error_info:
+        CapabilityBinder().bind(
+            [provider],
+            [requirement],
+            provider_selections={
+                "django": {
+                    "primary_database": make_selection(
+                        "postgres",
+                        tags=[
+                            "relational",
+                            "docker",
+                        ],
+                    ),
+                }
+            },
+            selected_module_keys={
+                "django",
+                "postgres",
+            },
+        )
+
+    error = error_info.value
+
+    assert error.field_path == (
+        "modules.django.bindings."
+        "primary_database.tags"
+    )
+    assert error.context["reason"] == "tag_mismatch"
+    assert error.context["required_tags"] == [
+        "docker",
+        "relational",
+    ]
+    assert error.context["missing_tags"] == ["docker"]

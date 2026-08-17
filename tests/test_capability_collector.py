@@ -76,6 +76,9 @@ def test_collector_collects_and_renders_capability_contracts(
     assert providers[0].version == (
         postgres.manifest.meta.version
     )
+    assert providers[0].tags == (
+        postgres.manifest.meta.tags
+    )
     assert providers[0].capability == (
         "database.connection"
     )

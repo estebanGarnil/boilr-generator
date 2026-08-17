@@ -97,6 +97,11 @@ class CapabilityBinder:
                             selection.version_specifier
                         ),
                     )
+                    self._validate_provider_tags(
+                        requirement=requirement,
+                        provider=candidate,
+                        required_tags=selection.required_tags,
+                    )
 
             if not candidates:
                 if requirement.optional:
@@ -396,6 +401,52 @@ class CapabilityBinder:
             suggestion=(
                 "Select a compatible provider version or change "
                 "the requested version constraint."
+            ),
+        )
+
+    def _validate_provider_tags(
+        self,
+        *,
+        requirement: CapabilityRequirement,
+        provider: CapabilityProvider,
+        required_tags: list[str],
+    ) -> None:
+        """Validate the tags required by a provider selection."""
+        if not required_tags:
+            return
+
+        provider_tags = set(provider.tags)
+        missing_tags = sorted(
+            set(required_tags) - provider_tags
+        )
+
+        if not missing_tags:
+            return
+
+        field_path = (
+            f"modules.{requirement.module_key}."
+            f"bindings.{requirement.binding_key}.tags"
+        )
+
+        raise ProviderSelectionError(
+            (
+                f"Provider '{provider.module_key}' does not have "
+                "all required tags."
+            ),
+            module_key=requirement.module_key,
+            field_path=field_path,
+            context={
+                "reason": "tag_mismatch",
+                "binding_key": requirement.binding_key,
+                "capability": requirement.capability,
+                "provider_module": provider.module_key,
+                "required_tags": sorted(required_tags),
+                "provider_tags": sorted(provider.tags),
+                "missing_tags": missing_tags,
+            },
+            suggestion=(
+                "Select a provider containing every required tag "
+                "or remove the incompatible tags."
             ),
         )
 
