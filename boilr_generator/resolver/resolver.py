@@ -50,9 +50,23 @@ class Resolver:
             )
         )
 
+        provider_selections = {
+            project_module.key: {
+                binding_key: selection.provider
+                for binding_key, selection
+                in project_module.bindings.items()
+            }
+            for project_module in manifest.modules
+            if project_module.bindings
+        }
+
         bindings = self.capability_binder.bind(
             providers,
             requirements,
+            provider_selections=provider_selections,
+            selected_module_keys=set(
+                manifest.list_module_keys()
+            ),
         )
 
         dependency_graph = self.dependency_graph_builder.build(

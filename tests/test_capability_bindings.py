@@ -7,6 +7,10 @@ from boilr_generator.exceptions import (
     AmbiguousProviderError,
     BindingError,
     MissingCapabilityError,
+    ProviderSelectionError,
+)
+from boilr_generator.manifest import (
+    load_project_manifest_from_dict,
 )
 from boilr_generator.resolver import Resolver
 from boilr_generator.resolver.bindings import CapabilityBinder
@@ -343,3 +347,164 @@ def test_binder_accepts_additional_provider_fields():
         "port": 5432,
         "engine": "postgresql",
     }
+
+@pytest.mark.parametrize("unique", [True, False])
+def test_binder_uses_explicit_provider_selection(unique):
+    providers = [
+        make_provider("postgres"),
+        make_provider(
+            "mysql",
+            host="mysql",
+        ),
+    ]
+    requirement = make_requirement(unique=unique)
+
+    bindings = CapabilityBinder().bind(
+        providers,
+        [requirement],
+        provider_selections={
+            "django": {
+                "primary_database": "mysql",
+            }
+        },
+        selected_module_keys={
+            "django",
+            "postgres",
+            "mysql",
+        },
+    )
+
+    assert len(bindings) == 1
+    assert bindings[0].provider_module_key == "mysql"
+    assert bindings[0].values["host"] == "mysql"
+
+
+def test_binder_rejects_unknown_binding_selection():
+    provider = make_provider("postgres")
+    requirement = make_requirement()
+
+    with pytest.raises(
+        ProviderSelectionError
+    ) as error_info:
+        CapabilityBinder().bind(
+            [provider],
+            [requirement],
+            provider_selections={
+                "django": {
+                    "unknown_database": "postgres",
+                }
+            },
+            selected_module_keys={
+                "django",
+                "postgres",
+            },
+        )
+
+    error = error_info.value
+
+    assert error.code == "provider_selection_error"
+    assert error.field_path == (
+        "modules.django.bindings.unknown_database"
+    )
+    assert error.context["reason"] == "unknown_binding"
+    assert error.context["available_bindings"] == [
+        "primary_database"
+    ]
+
+
+@pytest.mark.parametrize("optional", [False, True])
+def test_binder_rejects_provider_not_selected(
+    optional,
+):
+    provider = make_provider("postgres")
+    requirement = make_requirement(optional=optional)
+
+    with pytest.raises(
+        ProviderSelectionError
+    ) as error_info:
+        CapabilityBinder().bind(
+            [provider],
+            [requirement],
+            provider_selections={
+                "django": {
+                    "primary_database": "mysql",
+                }
+            },
+            selected_module_keys={
+                "django",
+                "postgres",
+            },
+        )
+
+    error = error_info.value
+
+    assert error.context["reason"] == (
+        "provider_not_selected"
+    )
+    assert error.context["provider_module"] == "mysql"
+
+
+def test_binder_rejects_provider_capability_mismatch():
+    providers = [
+        make_provider("postgres"),
+        CapabilityProvider(
+            module_key="redis",
+            capability="cache.connection",
+            values={},
+        ),
+    ]
+    requirement = make_requirement()
+
+    with pytest.raises(
+        ProviderSelectionError
+    ) as error_info:
+        CapabilityBinder().bind(
+            providers,
+            [requirement],
+            provider_selections={
+                "django": {
+                    "primary_database": "redis",
+                }
+            },
+            selected_module_keys={
+                "django",
+                "postgres",
+                "redis",
+            },
+        )
+
+    error = error_info.value
+
+    assert error.context["reason"] == (
+        "capability_mismatch"
+    )
+    assert error.context["provider_module"] == "redis"
+    assert error.context["provided_capabilities"] == [
+        "cache.connection"
+    ]
+
+def test_resolver_honors_explicit_provider_selection(
+    registry,
+    valid_manifest_data,
+):
+    valid_manifest_data["modules"][1]["bindings"] = {
+        "primary_database": {
+            "provider": "postgres",
+        }
+    }
+
+    manifest = load_project_manifest_from_dict(
+        valid_manifest_data
+    )
+
+    result = Resolver(registry).resolve(manifest)
+
+    django_bindings = result.bindings_for_consumer(
+        "django"
+    )
+
+    assert len(django_bindings) == 1
+    assert (
+        django_bindings[0].provider_module_key
+        == "postgres"
+    )

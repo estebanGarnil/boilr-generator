@@ -1,5 +1,6 @@
 """Capability provider selection and binding creation."""
 
+from collections.abc import Mapping
 from copy import deepcopy
 
 from boilr_generator.core.capabilities import (
@@ -11,6 +12,7 @@ from boilr_generator.exceptions import (
     AmbiguousProviderError,
     BindingError,
     MissingCapabilityError,
+    ProviderSelectionError,
 )
 
 TYPE_MAPPING: dict[str, type] = {
@@ -28,9 +30,31 @@ class CapabilityBinder:
         self,
         providers: list[CapabilityProvider],
         requirements: list[CapabilityRequirement],
+        *,
+        provider_selections: Mapping[
+            str,
+            Mapping[str, str],
+        ]
+        | None = None,
+        selected_module_keys: set[str] | None = None,
     ) -> list[CapabilityBinding]:
         """Resolve every requirement into zero or more bindings."""
         bindings: list[CapabilityBinding] = []
+        selections = provider_selections or {}
+
+        available_module_keys = (
+            set(selected_module_keys)
+            if selected_module_keys is not None
+            else {
+                provider.module_key
+                for provider in providers
+            }
+        )
+
+        self._validate_provider_selections(
+            requirements=requirements,
+            provider_selections=selections,
+        )
 
         for requirement in requirements:
             candidates = [
@@ -38,6 +62,20 @@ class CapabilityBinder:
                 for provider in providers
                 if provider.capability == requirement.capability
             ]
+
+            selected_provider = selections.get(
+                requirement.module_key,
+                {},
+            ).get(requirement.binding_key)
+
+            if selected_provider is not None:
+                candidates = self._select_explicit_provider(
+                    requirement=requirement,
+                    provider_module_key=selected_provider,
+                    candidates=candidates,
+                    providers=providers,
+                    selected_module_keys=available_module_keys,
+                )
 
             if not candidates:
                 if requirement.optional:
@@ -114,6 +152,140 @@ class CapabilityBinder:
                 )
 
         return bindings
+
+    def _validate_provider_selections(
+        self,
+        *,
+        requirements: list[CapabilityRequirement],
+        provider_selections: Mapping[
+            str,
+            Mapping[str, str],
+        ],
+    ) -> None:
+        """Reject selections targeting undeclared bindings."""
+        bindings_by_module: dict[str, set[str]] = {}
+
+        for requirement in requirements:
+            bindings_by_module.setdefault(
+                requirement.module_key,
+                set(),
+            ).add(requirement.binding_key)
+
+        for module_key, selections in (
+            provider_selections.items()
+        ):
+            available_bindings = bindings_by_module.get(
+                module_key,
+                set(),
+            )
+
+            for binding_key, provider_module in (
+                selections.items()
+            ):
+                if binding_key in available_bindings:
+                    continue
+
+                raise ProviderSelectionError(
+                    (
+                        f"Module '{module_key}' selects a provider "
+                        f"for unknown binding '{binding_key}'."
+                    ),
+                    module_key=module_key,
+                    field_path=(
+                        f"modules.{module_key}."
+                        f"bindings.{binding_key}"
+                    ),
+                    context={
+                        "reason": "unknown_binding",
+                        "binding_key": binding_key,
+                        "provider_module": provider_module,
+                        "available_bindings": sorted(
+                            available_bindings
+                        ),
+                    },
+                    suggestion=(
+                        "Remove this selection or use a binding "
+                        "declared by the consumer module."
+                    ),
+                )
+
+    def _select_explicit_provider(
+        self,
+        *,
+        requirement: CapabilityRequirement,
+        provider_module_key: str,
+        candidates: list[CapabilityProvider],
+        providers: list[CapabilityProvider],
+        selected_module_keys: set[str],
+    ) -> list[CapabilityProvider]:
+        """Select and validate one explicitly requested provider."""
+        selection_path = (
+            f"modules.{requirement.module_key}."
+            f"bindings.{requirement.binding_key}"
+        )
+
+        if provider_module_key not in selected_module_keys:
+            raise ProviderSelectionError(
+                (
+                    f"Provider module '{provider_module_key}' selected "
+                    f"by module '{requirement.module_key}' is not "
+                    "part of the project."
+                ),
+                module_key=requirement.module_key,
+                field_path=selection_path,
+                context={
+                    "reason": "provider_not_selected",
+                    "binding_key": requirement.binding_key,
+                    "capability": requirement.capability,
+                    "provider_module": provider_module_key,
+                    "selected_modules": sorted(
+                        selected_module_keys
+                    ),
+                },
+                suggestion=(
+                    f"Add module '{provider_module_key}' to the "
+                    "project or select another provider."
+                ),
+            )
+
+        selected_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.module_key == provider_module_key
+        ]
+
+        if selected_candidates:
+            return selected_candidates
+
+        provided_capabilities = sorted(
+            {
+                provider.capability
+                for provider in providers
+                if provider.module_key
+                == provider_module_key
+            }
+        )
+
+        raise ProviderSelectionError(
+            (
+                f"Module '{provider_module_key}' does not provide "
+                f"capability '{requirement.capability}' required "
+                f"by module '{requirement.module_key}'."
+            ),
+            module_key=requirement.module_key,
+            field_path=selection_path,
+            context={
+                "reason": "capability_mismatch",
+                "binding_key": requirement.binding_key,
+                "capability": requirement.capability,
+                "provider_module": provider_module_key,
+                "provided_capabilities": provided_capabilities,
+            },
+            suggestion=(
+                "Select a module providing capability "
+                f"'{requirement.capability}'."
+            ),
+        )
 
     def _create_binding(
         self,

@@ -131,6 +131,12 @@ class AmbiguousRequirementError(ResolutionError):
     code = "ambiguous_requirement"
 
 
+class ProviderSelectionError(ResolutionError):
+    """Raised when an explicit provider selection is invalid."""
+
+    code = "provider_selection_error"
+
+
 class IncompatibleModuleError(ResolutionError):
     """Raised when selected modules are incompatible."""
 
@@ -324,6 +330,7 @@ __all__ = [
     "ModuleNotFoundError",
     "ModuleSchemaError",
     "OutputDirectoryError",
+    "ProviderSelectionError",
     "ResolutionError",
     "SourceNotFoundError",
     "SourceReadError",
