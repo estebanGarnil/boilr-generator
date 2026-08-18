@@ -20,6 +20,7 @@ dependencies = [
     "PyYAML>=6,<7",
     "Jinja2>=3.1,<4",
     "rich>=13",
+    "packaging>=24,<27",
 ]
 
 [project.optional-dependencies]

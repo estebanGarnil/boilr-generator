@@ -60,7 +60,9 @@ def test_collector_collects_and_renders_capability_contracts(
     resolved_project,
 ):
     project = resolved_project.model_copy(deep=True)
-    configure_capability_contracts(project)
+    postgres, _ = configure_capability_contracts(
+        project
+    )
 
     collector = CapabilityCollector()
 
@@ -71,6 +73,12 @@ def test_collector_collects_and_renders_capability_contracts(
 
     assert len(providers) == 1
     assert providers[0].module_key == "postgres"
+    assert providers[0].version == (
+        postgres.manifest.meta.version
+    )
+    assert providers[0].tags == (
+        postgres.manifest.meta.tags
+    )
     assert providers[0].capability == (
         "database.connection"
     )

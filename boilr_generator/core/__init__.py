@@ -3,6 +3,7 @@
 from boilr_generator.core.capabilities import (
     CapabilityBinding,
     CapabilityProvider,
+    CapabilityProviderSelection,
     CapabilityRequirement,
 )
 from boilr_generator.core.contributions import (
@@ -20,6 +21,7 @@ from boilr_generator.core.project import ResolvedProject
 __all__ = [
     "CapabilityBinding",
     "CapabilityProvider",
+    "CapabilityProviderSelection",
     "CapabilityRequirement",
     "ResolvedModule",
     "ResolvedProject",
