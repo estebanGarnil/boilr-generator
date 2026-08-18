@@ -1,7 +1,7 @@
 """Project generation planning and execution."""
 
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
 import yaml
@@ -9,7 +9,9 @@ import yaml
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
     PlannedFile,
+    PlannedPathState,
     PlannedRemoval,
+    RemovalReason,
 )
 from boilr_generator.exceptions import (
     FileConflictError,
@@ -61,7 +63,15 @@ class ProjectGenerator:
         )
 
         files: list[PlannedFile] = []
-        removals: list[PlannedRemoval] = []
+        removals = (
+            self._plan_removals_from_state(
+                states=initial_output_state,
+                reason="clean",
+                module_key=None,
+            )
+            if clean
+            else []
+        )
 
         for module in resolved_project.ordered_modules():
             module_key = module.manifest.meta.key
@@ -149,6 +159,43 @@ class ProjectGenerator:
             clean_output=clean,
             removals=removals,
         )
+
+    def _plan_removals_from_state(
+        self,
+        *,
+        states: list[PlannedPathState],
+        reason: RemovalReason,
+        module_key: str | None,
+    ) -> list[PlannedRemoval]:
+        """Build exact removals ordered deepest first."""
+        existing_states = [
+            state
+            for state in states
+            if state.exists
+        ]
+
+        ordered_states = sorted(
+            existing_states,
+            key=lambda state: (
+                -len(
+                    PurePosixPath(
+                        state.relative_path
+                    ).parts
+                ),
+                state.relative_path,
+            ),
+        )
+
+        return [
+            PlannedRemoval(
+                path=state.path,
+                relative_path=state.relative_path,
+                module=module_key,
+                reason=reason,
+                kind=state.kind,
+            )
+            for state in ordered_states
+        ]
 
     def _validate_clean_output_path(
         self,
@@ -295,6 +342,9 @@ class ProjectGenerator:
                 path=removal.path,
                 output_path=output_path,
                 module_key=removal.module,
+                allow_output_root=(
+                    removal.reason == "clean"
+                ),
             )
 
         if plan.clean_output and output_path.exists():
@@ -886,6 +936,7 @@ class ProjectGenerator:
         path: Path,
         output_path: Path,
         module_key: str | None,
+        allow_output_root: bool = False,
     ) -> str:
         """Reject removal of or outside the output directory."""
         return self._validate_contained_path(
@@ -894,7 +945,7 @@ class ProjectGenerator:
             module_key=module_key,
             field_path="generation.removals",
             path_kind="removal",
-            allow_root=False,
+            allow_root=allow_output_root,
         )
 
     def _build_planned_file(

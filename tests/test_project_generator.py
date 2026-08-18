@@ -842,6 +842,99 @@ def test_project_generator_execute_uses_plan_only(
             == planned_file.content
         )
 
+def test_project_generator_clean_plan_contains_exact_removals(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "clean-output"
+    empty_directory = output_path / "empty"
+    nested_directory = output_path / "nested"
+    nested_file = nested_directory / "data.bin"
+    root_file = output_path / "root.txt"
+
+    empty_directory.mkdir(parents=True)
+    nested_directory.mkdir()
+    nested_file.write_bytes(b"\x00nested\xff")
+    root_file.write_text(
+        "root",
+        encoding="utf-8",
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    assert [
+        removal.relative_path
+        for removal in plan.removals
+    ] == [
+        "nested/data.bin",
+        "empty",
+        "nested",
+        "root.txt",
+        ".",
+    ]
+
+    assert [
+        removal.kind
+        for removal in plan.removals
+    ] == [
+        "file",
+        "directory",
+        "directory",
+        "file",
+        "directory",
+    ]
+
+    assert all(
+        removal.reason == "clean"
+        for removal in plan.removals
+    )
+    assert all(
+        removal.module is None
+        for removal in plan.removals
+    )
+
+    data = plan.to_dict()
+
+    assert data["summary"]["removals_count"] == 5
+    assert (
+        data["summary"]["clean_removals_count"]
+        == 5
+    )
+    assert (
+        data["summary"]["replace_removals_count"]
+        == 0
+    )
+
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_clean_plan_has_no_removals_for_missing_output(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "missing-output"
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    assert plan.clean_output is True
+    assert plan.removals == []
+    assert (
+        plan.summary["clean_removals_count"]
+        == 0
+    )
+    assert output_path.exists() is False
 
 def test_project_generator_clean_is_planned(
     registry,
