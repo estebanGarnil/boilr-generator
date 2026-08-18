@@ -1010,3 +1010,107 @@ def test_binder_rejects_empty_direct_selection():
     assert error_info.value.context["reason"] == (
         "empty_selection"
     )
+
+def test_resolver_selects_provider_from_manifest_criteria(
+    registry,
+    valid_manifest_data,
+    resolved_project,
+    monkeypatch,
+):
+    project = resolved_project.model_copy(deep=True)
+
+    postgres = project.get_module("postgres")
+    django = project.get_module("django")
+    integration = project.get_module("django-postgres")
+
+    assert postgres is not None
+    assert django is not None
+    assert integration is not None
+
+    postgres.manifest.meta.version = "17.2.0"
+    postgres.manifest.meta.tags = [
+        "sql",
+        "relational",
+        "managed",
+    ]
+
+    mysql = postgres.model_copy(deep=True)
+    mysql.manifest.meta.key = "mysql"
+    mysql.manifest.meta.name = "MySQL"
+    mysql.manifest.meta.version = "17.4.0"
+    mysql.manifest.meta.tags = [
+        "sql",
+        "relational",
+        "local",
+    ]
+
+    postgres_old = postgres.model_copy(deep=True)
+    postgres_old.manifest.meta.key = "postgres-old"
+    postgres_old.manifest.meta.name = "PostgreSQL old"
+    postgres_old.manifest.meta.version = "16.5.0"
+    postgres_old.manifest.meta.tags = [
+        "sql",
+        "relational",
+        "managed",
+    ]
+
+    valid_manifest_data["modules"][1]["bindings"] = {
+        "primary_database": {
+            "version": ">=17,<18",
+            "tags": [
+                "managed",
+            ],
+        }
+    }
+
+    valid_manifest_data["modules"][2]["bindings"] = {
+        "database": {
+            "provider": "postgres",
+        }
+    }
+
+    valid_manifest_data["modules"].extend(
+        [
+            {
+                "key": "mysql",
+            },
+            {
+                "key": "postgres-old",
+            },
+        ]
+    )
+
+    manifest = load_project_manifest_from_dict(
+        valid_manifest_data
+    )
+
+    resolver = Resolver(registry)
+
+    monkeypatch.setattr(
+        resolver,
+        "_resolve_modules",
+        lambda _: [
+            postgres,
+            django,
+            integration,
+            mysql,
+            postgres_old,
+        ],
+    )
+
+    result = resolver.resolve(manifest)
+
+    database_providers = result.providers_for(
+        "database.connection"
+    )
+    django_bindings = result.bindings_for_consumer(
+        "django"
+    )
+
+    assert len(database_providers) == 3
+    assert len(django_bindings) == 1
+
+    binding = django_bindings[0]
+
+    assert binding.binding_key == "primary_database"
+    assert binding.provider_module_key == "postgres"
