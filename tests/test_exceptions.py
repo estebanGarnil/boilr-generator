@@ -14,6 +14,7 @@ from boilr_generator.exceptions import (
     MissingRequirementError,
     ModuleNotFoundError,
     OutputDirectoryError,
+    ProviderSelectionError,
     SourceReadError,
     TemplateRenderError,
     UnknownOptionError,
@@ -40,6 +41,7 @@ from boilr_generator.exceptions import (
         UnsafePathError,
         SourceReadError,
         InvalidEnvironmentVariableError,
+        ProviderSelectionError,
     ],
 )
 def test_all_boilr_errors_inherit_from_root(exception_type):

@@ -1,12 +1,35 @@
-from typing import Any
+from typing import Annotated, Any
 
+from packaging.specifiers import (
+    InvalidSpecifier,
+    SpecifierSet,
+)
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
+    field_validator,
     model_validator,
 )
 
+BindingKey = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        strict=True,
+    ),
+]
+
+ProviderTag = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        strict=True,
+    ),
+]
 
 class ProjectInfo(BaseModel):
     model_config = ConfigDict(
@@ -22,6 +45,75 @@ class ProjectInfo(BaseModel):
         strict=True,
     )
 
+class ProjectBindingSelection(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    provider: str | None = Field(
+        default=None,
+        min_length=1,
+        strict=True,
+    )
+
+    version: str | None = Field(
+        default=None,
+        min_length=1,
+        strict=True,
+    )
+
+    tags: list[ProviderTag] = Field(
+        default_factory=list
+    )
+
+    @model_validator(mode="after")
+    def validate_non_empty_selection(
+        self,
+    ) -> "ProjectBindingSelection":
+        if (
+            self.provider is None
+            and self.version is None
+            and not self.tags
+        ):
+            raise ValueError(
+                "A provider selection must define at least "
+                "one criterion."
+            )
+
+        return self
+
+    @field_validator("version")
+    @classmethod
+    def validate_version_specifier(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        try:
+            SpecifierSet(value)
+        except InvalidSpecifier as error:
+            raise ValueError(
+                "Invalid provider version constraint."
+            ) from error
+
+        return value
+
+    @field_validator("tags")
+    @classmethod
+    def validate_unique_tags(
+        cls,
+        value: list[str],
+    ) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError(
+                "Duplicate provider tags are not allowed."
+            )
+
+        return value
+
 
 class ProjectModule(BaseModel):
     model_config = ConfigDict(
@@ -36,6 +128,10 @@ class ProjectModule(BaseModel):
     options: dict[str, Any] = Field(
         default_factory=dict
     )
+    bindings: dict[
+        BindingKey,
+        ProjectBindingSelection,
+    ] = Field(default_factory=dict)
 
 
 class ProjectManifest(BaseModel):
