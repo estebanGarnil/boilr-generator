@@ -7,6 +7,7 @@ from boilr_generator.core.generation_plan import (
     PlannedFile,
     PlannedRemoval,
 )
+from boilr_generator.core.project import ResolvedProject
 from boilr_generator.exceptions import (
     FileConflictError,
     OutputDirectoryError,
@@ -20,6 +21,77 @@ from boilr_generator.modules.schemas import (
     RenderSource,
 )
 
+FilesystemSnapshotEntry = tuple[
+    str,
+    bytes | str | None,
+    int,
+]
+
+
+def snapshot_filesystem(
+    root: Path,
+) -> dict[str, FilesystemSnapshotEntry]:
+    """Capture paths, types, contents, and permission modes."""
+    if not root.exists():
+        return {}
+
+    paths = [
+        root,
+        *sorted(root.rglob("*")),
+    ]
+    snapshot: dict[
+        str,
+        FilesystemSnapshotEntry,
+    ] = {}
+
+    for path in paths:
+        relative_path = (
+            "."
+            if path == root
+            else path.relative_to(root).as_posix()
+        )
+        mode = path.lstat().st_mode & 0o777
+
+        if path.is_symlink():
+            entry_type = "symlink"
+            content: bytes | str | None = str(
+                path.readlink()
+            )
+        elif path.is_dir():
+            entry_type = "directory"
+            content = None
+        else:
+            entry_type = "file"
+            content = path.read_bytes()
+
+        snapshot[relative_path] = (
+            entry_type,
+            content,
+            mode,
+        )
+
+    return snapshot
+
+
+def project_with_copy_strategy(
+    resolved_project: ResolvedProject,
+    strategy: str,
+) -> ResolvedProject:
+    """Return a project using one selected Django copy strategy."""
+    project = resolved_project.model_copy(deep=True)
+    django = project.get_module("django")
+
+    assert django is not None
+    assert django.manifest.sources.copy_sources
+
+    copy_source = django.manifest.sources.copy_sources[0]
+    django.manifest.sources.copy_sources[0] = (
+        copy_source.model_copy(
+            update={"strategy": strategy},
+        )
+    )
+
+    return project
 
 def test_project_generator_writes_env_file(
     tmp_path,
@@ -108,20 +180,244 @@ def test_project_generator_creates_generation_plan(
     assert "backend" in plan.docker_services or len(plan.docker_services) > 0
     assert len(plan.env_variables) > 0
 
-def test_project_generator_plan_does_not_write_files(
-        registry, 
-        manifest, 
-        tmp_path,
+def test_project_generator_plan_does_not_create_missing_output(
+    registry,
+    manifest,
+    tmp_path,
 ):
-    generator = ProjectGenerator(registry)
+    output_path = tmp_path / "missing-output"
+    before = snapshot_filesystem(output_path)
 
-    generator.plan(
+    plan = ProjectGenerator(registry).plan(
         manifest=manifest,
-        output_path=tmp_path,
+        output_path=output_path,
     )
 
-    assert not (tmp_path / "docker-compose.yml").exists()
-    assert not (tmp_path / ".env").exists()
+    assert plan.files
+    assert output_path.exists() is False
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_plan_does_not_modify_existing_output(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "existing-output"
+    nested_path = output_path / "existing"
+
+    nested_path.mkdir(parents=True)
+    (output_path / ".env").write_bytes(
+        b"ORIGINAL=value\n"
+    )
+    (nested_path / "keep.bin").write_bytes(
+        b"\x00original\xff"
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    env_file = next(
+        file
+        for file in plan.files
+        if file.relative_destination_path == ".env"
+    )
+
+    assert env_file.action == "overwrite"
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_clean_plan_does_not_modify_output(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "clean-output"
+    existing_path = output_path / "nested"
+
+    existing_path.mkdir(parents=True)
+    (existing_path / "keep.txt").write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    assert plan.clean_output is True
+    assert all(
+        file.action == "create"
+        for file in plan.files
+    )
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_replace_plan_does_not_remove_target(
+    registry,
+    manifest,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "replace-output"
+    destination = output_path / "backend" / "apps"
+
+    destination.mkdir(parents=True)
+    existing_file = destination / "existing.txt"
+    existing_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    project = project_with_copy_strategy(
+        resolved_project,
+        "replace",
+    )
+    generator = ProjectGenerator(registry)
+
+    monkeypatch.setattr(
+        generator.resolver,
+        "resolve",
+        lambda _: project,
+    )
+
+    before = snapshot_filesystem(output_path)
+    relative_destination = destination.relative_to(
+        output_path
+    )
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    removal = next(
+        removal
+        for removal in plan.removals
+        if Path(removal.relative_path)
+        == relative_destination
+    )
+
+    assert removal.path == destination
+    assert removal.reason == "replace"
+    assert existing_file.exists() is True
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_skip_plan_does_not_modify_target(
+    registry,
+    manifest,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "skip-output"
+    destination = output_path / "backend" / "apps"
+
+    destination.mkdir(parents=True)
+    existing_file = destination / "existing.txt"
+    existing_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    project = project_with_copy_strategy(
+        resolved_project,
+        "skip",
+    )
+    generator = ProjectGenerator(registry)
+
+    monkeypatch.setattr(
+        generator.resolver,
+        "resolve",
+        lambda _: project,
+    )
+
+    before = snapshot_filesystem(output_path)
+    relative_destination = destination.relative_to(
+        output_path
+    )
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    skipped_files = [
+        file
+        for file in plan.files
+        if Path(
+            file.relative_destination_path
+        ).is_relative_to(relative_destination)
+    ]
+
+    assert skipped_files
+    assert all(
+        file.action == "skip"
+        for file in skipped_files
+    )
+    assert existing_file.exists() is True
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_failed_plan_does_not_modify_output(
+    registry,
+    manifest,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "failed-output"
+    output_path.mkdir()
+
+    protected_file = output_path / "protected.txt"
+    protected_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    project = resolved_project.model_copy(deep=True)
+    postgres = project.get_module("postgres")
+
+    assert postgres is not None
+
+    postgres.manifest.sources.render = [
+        RenderSource.model_validate(
+            {
+                "from": "missing-template.j2",
+                "to": "generated.txt",
+            }
+        )
+    ]
+
+    generator = ProjectGenerator(registry)
+
+    monkeypatch.setattr(
+        generator.resolver,
+        "resolve",
+        lambda _: project,
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    with pytest.raises(SourceNotFoundError):
+        generator.plan(
+            manifest=manifest,
+            output_path=output_path,
+            clean=True,
+        )
+
+    assert protected_file.exists() is True
+    assert snapshot_filesystem(output_path) == before
 
 def test_project_generator_execute_writes_files(
     registry, 
