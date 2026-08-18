@@ -3,9 +3,37 @@
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from boilr_generator.core.project import ResolvedProject
+
+PathKind = Literal[
+    "file",
+    "directory",
+    "symlink",
+]
+DirectoryReason = Literal[
+    "output",
+    "parent",
+]
+RemovalReason = Literal[
+    "clean",
+    "replace",
+]
+
+
+@dataclass(slots=True)
+class PlannedPathState:
+    """Expected state of one filesystem path before execution."""
+
+    path: Path
+    relative_path: str
+    exists: bool
+    kind: PathKind | None = None
+    content_size: int | None = None
+    content_sha256: str | None = None
+    mode: int | None = None
+    link_target: str | None = None
 
 
 @dataclass(slots=True)
@@ -33,21 +61,38 @@ class PlannedFile:
 
 
 @dataclass(slots=True)
+class PlannedDirectory:
+    """One directory that execution must create."""
+
+    path: Path
+    relative_path: str
+    reason: DirectoryReason
+    module: str | None = None
+
+
+@dataclass(slots=True)
 class PlannedRemoval:
-    """One path that must be removed before writing files."""
+    """One exact path that execution must remove."""
 
     path: Path
     relative_path: str
     module: str | None = None
-    reason: str = "replace"
+    reason: RemovalReason = "replace"
+    kind: PathKind | None = None
 
 
 @dataclass(slots=True)
 class GenerationPlan:
-    """Complete and inspectable project generation plan."""
+    """Complete and inspectable project generation contract."""
 
     resolved_project: ResolvedProject
     output_path: Path
+    initial_output_state: list[PlannedPathState] = field(
+        default_factory=list
+    )
+    directories: list[PlannedDirectory] = field(
+        default_factory=list
+    )
     files: list[PlannedFile] = field(default_factory=list)
     removals: list[PlannedRemoval] = field(
         default_factory=list
@@ -90,6 +135,12 @@ class GenerationPlan:
             "modules_count": len(
                 self.resolved_project.modules
             ),
+            "initial_paths_count": len(
+                self.initial_output_state
+            ),
+            "directories_to_create": len(
+                self.directories
+            ),
             "files_count": len(self.files),
             "files_to_create": len(
                 self.files_to_create
@@ -101,6 +152,14 @@ class GenerationPlan:
                 self.files_to_skip
             ),
             "removals_count": len(self.removals),
+            "clean_removals_count": sum(
+                removal.reason == "clean"
+                for removal in self.removals
+            ),
+            "replace_removals_count": sum(
+                removal.reason == "replace"
+                for removal in self.removals
+            ),
             "docker_services_count": len(
                 self.docker_services
             ),
@@ -111,10 +170,15 @@ class GenerationPlan:
                 file.content_size
                 for file in self.files
             ),
+            "content_bytes_to_write": sum(
+                file.content_size
+                for file in self.files
+                if file.action != "skip"
+            ),
         }
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize plan metadata without file contents."""
+        """Serialize contract metadata without file contents."""
         data = asdict(self)
 
         data["output_path"] = str(self.output_path)
@@ -126,6 +190,16 @@ class GenerationPlan:
                 self.resolved_project.list_module_keys()
             ),
         }
+
+        for path_state in data["initial_output_state"]:
+            path_state["path"] = str(
+                path_state["path"]
+            )
+
+        for directory in data["directories"]:
+            directory["path"] = str(
+                directory["path"]
+            )
 
         for serialized_file, planned_file in zip(
             data["files"],
