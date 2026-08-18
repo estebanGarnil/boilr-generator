@@ -1,4 +1,5 @@
 import shutil
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -179,6 +180,94 @@ def test_project_generator_creates_generation_plan(
     assert ".env" in [file.relative_destination_path for file in plan.files]
     assert "backend" in plan.docker_services or len(plan.docker_services) > 0
     assert len(plan.env_variables) > 0
+
+def test_project_generator_plan_captures_missing_output_state(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "missing-output"
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    assert len(plan.initial_output_state) == 1
+
+    root_state = plan.initial_output_state[0]
+
+    assert root_state.path == output_path
+    assert root_state.relative_path == "."
+    assert root_state.exists is False
+    assert root_state.kind is None
+    assert output_path.exists() is False
+
+
+def test_project_generator_plan_captures_existing_output_state(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "existing-output"
+    nested_directory = output_path / "existing"
+    env_file = output_path / ".env"
+    nested_file = nested_directory / "data.bin"
+
+    nested_directory.mkdir(parents=True)
+
+    env_content = b"ORIGINAL=value\n"
+    nested_content = b"\x00existing\xff"
+
+    env_file.write_bytes(env_content)
+    nested_file.write_bytes(nested_content)
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    state_by_path = {
+        state.relative_path: state
+        for state in plan.initial_output_state
+    }
+
+    assert set(state_by_path) == {
+        ".",
+        ".env",
+        "existing",
+        "existing/data.bin",
+    }
+
+    root_state = state_by_path["."]
+    env_state = state_by_path[".env"]
+    nested_state = state_by_path[
+        "existing/data.bin"
+    ]
+
+    assert root_state.kind == "directory"
+
+    assert env_state.kind == "file"
+    assert env_state.content_size == len(env_content)
+    assert env_state.content_sha256 == sha256(
+        env_content
+    ).hexdigest()
+
+    assert nested_state.kind == "file"
+    assert nested_state.content_size == len(
+        nested_content
+    )
+    assert nested_state.content_sha256 == sha256(
+        nested_content
+    ).hexdigest()
+
+    planned_env = next(
+        file
+        for file in plan.files
+        if file.relative_destination_path == ".env"
+    )
+
+    assert planned_env.action == "overwrite"
 
 def test_project_generator_plan_does_not_create_missing_output(
     registry,

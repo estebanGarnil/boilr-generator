@@ -24,6 +24,9 @@ from boilr_generator.generation.context import (
 from boilr_generator.generation.docker import DockerComposeGenerator
 from boilr_generator.generation.env import EnvGenerator
 from boilr_generator.generation.files import FileGenerator
+from boilr_generator.generation.filesystem import (
+    capture_output_state,
+)
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.modules.schemas import CopySource, RenderSource
@@ -48,9 +51,14 @@ class ProjectGenerator:
     ) -> GenerationPlan:
         """Create a generation plan without writing files."""
         output_path = Path(output_path)
+
         if clean:
             self._validate_clean_output_path(output_path)
+
         resolved_project = self.resolver.resolve(manifest)
+        initial_output_state = capture_output_state(
+            output_path
+        )
 
         files: list[PlannedFile] = []
         removals: list[PlannedRemoval] = []
@@ -132,6 +140,7 @@ class ProjectGenerator:
         return GenerationPlan(
             resolved_project=resolved_project,
             output_path=output_path,
+            initial_output_state=initial_output_state,
             files=files,
             docker_services=list(
                 docker_compose.get("services", {}).keys()
