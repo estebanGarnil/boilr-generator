@@ -389,15 +389,42 @@ def test_project_generator_replace_plan_does_not_remove_target(
         output_path=output_path,
     )
 
-    removal = next(
-        removal
-        for removal in plan.removals
-        if Path(removal.relative_path)
-        == relative_destination
+    expected_file_path = (
+        relative_destination / "existing.txt"
+    ).as_posix()
+    expected_root_path = (
+        relative_destination.as_posix()
     )
 
-    assert removal.path == destination
-    assert removal.reason == "replace"
+    assert [
+        removal.relative_path
+        for removal in plan.removals
+    ] == [
+        expected_file_path,
+        expected_root_path,
+    ]
+
+    assert [
+        removal.kind
+        for removal in plan.removals
+    ] == [
+        "file",
+        "directory",
+    ]
+
+    assert all(
+        removal.reason == "replace"
+        for removal in plan.removals
+    )
+    assert all(
+        removal.module == "django"
+        for removal in plan.removals
+    )
+
+    assert (
+        plan.summary["replace_removals_count"]
+        == 2
+    )
     assert existing_file.exists() is True
     assert snapshot_filesystem(output_path) == before
 
@@ -1032,6 +1059,14 @@ def test_copy_strategy_replace_plans_removal(
         "old",
         encoding="utf-8",
     )
+    old_directory = destination / "old"
+    old_directory.mkdir()
+
+    nested_old_file = old_directory / "nested.txt"
+    nested_old_file.write_text(
+        "nested old",
+        encoding="utf-8",
+    )
 
     generator = ProjectGenerator(registry)
 
@@ -1054,10 +1089,44 @@ def test_copy_strategy_replace_plans_removal(
         file.action == "create"
         for file in files
     )
-    assert len(removals) == 1
-    assert removals[0].path == destination
-    assert removals[0].relative_path == "target"
-    assert removals[0].reason == "replace"
+    assert [
+        removal.relative_path
+        for removal in removals
+    ] == [
+        "target/old/nested.txt",
+        "target/old",
+        "target/old.txt",
+        "target",
+    ]
+
+    assert [
+        removal.kind
+        for removal in removals
+    ] == [
+        "file",
+        "directory",
+        "file",
+        "directory",
+    ]
+
+    assert [
+        removal.path
+        for removal in removals
+    ] == [
+        nested_old_file,
+        old_directory,
+        destination / "old.txt",
+        destination,
+    ]
+
+    assert all(
+        removal.reason == "replace"
+        for removal in removals
+    )
+    assert all(
+        removal.module == "example"
+        for removal in removals
+    )
 
 def test_copy_strategy_replace_executes_removal(
     registry,

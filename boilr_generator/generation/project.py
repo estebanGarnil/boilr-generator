@@ -91,6 +91,9 @@ class ProjectGenerator:
                         module_path=module_path,
                         source=source,
                         output_path=output_path,
+                        initial_output_state=(
+                            initial_output_state
+                        ),
                         field_path=(
                             f"modules.{module_key}.sources."
                             f"copy[{index}].from"
@@ -196,6 +199,40 @@ class ProjectGenerator:
             )
             for state in ordered_states
         ]
+
+    def _plan_replace_removals(
+        self,
+        *,
+        destination_root: Path,
+        output_path: Path,
+        initial_output_state: list[PlannedPathState],
+        module_key: str,
+    ) -> list[PlannedRemoval]:
+        """Plan one exact replacement subtree."""
+        self._validate_removal_path(
+            path=destination_root,
+            output_path=output_path,
+            module_key=module_key,
+        )
+
+        subtree_states = [
+            state
+            for state in initial_output_state
+            if (
+                state.exists
+                and (
+                    state.path == destination_root
+                    or destination_root
+                    in state.path.parents
+                )
+            )
+        ]
+
+        return self._plan_removals_from_state(
+            states=subtree_states,
+            reason="replace",
+            module_key=module_key,
+        )
 
     def _validate_clean_output_path(
         self,
@@ -630,6 +667,9 @@ class ProjectGenerator:
         output_path: Path,
         field_path: str,
         clean: bool,
+        initial_output_state: (
+            list[PlannedPathState] | None
+        ) = None,
     ) -> tuple[list[PlannedFile], list[PlannedRemoval]]:
         """Plan one copy source and its replacement removals."""
         source_path = module_path / source.from_
@@ -718,21 +758,44 @@ class ProjectGenerator:
                     )
                 )
 
+        if initial_output_state is None:
+            initial_output_state = capture_output_state(
+                output_path
+            )
+
+        destination_state = next(
+            (
+                state
+                for state in initial_output_state
+                if state.path == destination_root
+            ),
+            None,
+        )
+        destination_exists = (
+            destination_state is not None
+            and destination_state.exists
+        )
+
         removals: list[PlannedRemoval] = []
         action_override: str | None = None
 
         if clean:
             action_override = "create"
-        elif destination_root.exists():
+        elif destination_exists:
             if source.strategy == "skip":
                 action_override = "skip"
 
             elif source.strategy == "replace":
                 action_override = "create"
-                removals.append(
-                    self._build_planned_removal(
-                        path=destination_root,
+                removals.extend(
+                    self._plan_replace_removals(
+                        destination_root=(
+                            destination_root
+                        ),
                         output_path=output_path,
+                        initial_output_state=(
+                            initial_output_state
+                        ),
                         module_key=module_key,
                     )
                 )
@@ -908,27 +971,6 @@ class ProjectGenerator:
             )
 
         return str(relative_path)
-
-    def _build_planned_removal(
-        self,
-        *,
-        path: Path,
-        output_path: Path,
-        module_key: str,
-    ) -> PlannedRemoval:
-        """Build a safe removal contained by the output path."""
-        relative_path = self._validate_removal_path(
-            path=path,
-            output_path=output_path,
-            module_key=module_key,
-        )
-
-        return PlannedRemoval(
-            path=path,
-            relative_path=relative_path,
-            module=module_key,
-            reason="replace",
-        )
 
     def _validate_removal_path(
         self,
