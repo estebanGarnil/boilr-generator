@@ -145,6 +145,14 @@ def render_plan_overview(
         "Output",
         escape(shorten_path(plan_dict["output_path"])),
     )
+    table.add_row(
+        "Clean output",
+        (
+            "[yellow]Yes[/yellow]"
+            if plan_dict["clean_output"]
+            else "No"
+        ),
+    )
 
     render_section(
         table,
@@ -178,6 +186,56 @@ def render_summary(summary: dict) -> None:
         "Skip",
         f"[dim]{summary.get('files_to_skip', 0)}[/dim]",
     )
+    table.add_row(
+        "Directories",
+        str(
+            summary.get(
+                "directories_to_create",
+                0,
+            )
+        ),
+        "Removals",
+        str(
+            summary.get(
+                "removals_count",
+                0,
+            )
+        ),
+    )
+
+    table.add_row(
+        "Clean removals",
+        str(
+            summary.get(
+                "clean_removals_count",
+                0,
+            )
+        ),
+        "Replace removals",
+        str(
+            summary.get(
+                "replace_removals_count",
+                0,
+            )
+        ),
+    )
+
+    table.add_row(
+        "Initial paths",
+        str(
+            summary.get(
+                "initial_paths_count",
+                0,
+            )
+        ),
+        "Bytes to write",
+        str(
+            summary.get(
+                "content_bytes_to_write",
+                0,
+            )
+        ),
+    )
 
     table.add_row(
         "Docker",
@@ -205,6 +263,54 @@ def render_overwrite_warning(summary: dict) -> None:
         "file(s) will be overwritten."
     )
 
+def render_filesystem_operations(
+    plan_dict: dict,
+) -> None:
+    """Render exact planned removals and directory creations."""
+    table = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    table.add_column("Operation")
+    table.add_column("Reason")
+    table.add_column("Module")
+    table.add_column("Path")
+
+    removals = plan_dict["removals"]
+    directories = plan_dict["directories"]
+
+    if not removals and not directories:
+        table.add_row(
+            "None",
+            "",
+            "",
+            "",
+        )
+
+    for removal in removals:
+        table.add_row(
+            (
+                "[red]Remove "
+                f"{escape(removal['kind'])}[/red]"
+            ),
+            escape(removal["reason"]),
+            escape(removal["module"] or "project"),
+            escape(removal["relative_path"]),
+        )
+
+    for directory in directories:
+        table.add_row(
+            "[green]Create directory[/green]",
+            escape(directory["reason"]),
+            escape(directory["module"] or "project"),
+            escape(directory["relative_path"]),
+        )
+
+    render_section(
+        table,
+        "Filesystem operations",
+        border_style="bright_black",
+    )
 
 def render_files_tree(
     files: list[dict],
@@ -311,6 +417,16 @@ def dry_run(
             help="Print the complete generation plan as JSON.",
         ),
     ] = False,
+    clean: Annotated[
+        bool,
+        typer.Option(
+            "--clean",
+            help=(
+                "Preview cleaning the output directory "
+                "before generation."
+            ),
+        ),
+    ] = False,
     debug: Annotated[
         bool,
         typer.Option(
@@ -331,6 +447,7 @@ def dry_run(
         plan = generator.plan(
             manifest,
             output_path,
+            clean=clean,
         )
         plan_dict = plan.to_dict()
 
@@ -348,6 +465,9 @@ def dry_run(
         console.print()
 
         if info:
+            render_filesystem_operations(
+                plan_dict
+            )
             render_files_tree(plan_dict["files"])
         else:
             console.print(

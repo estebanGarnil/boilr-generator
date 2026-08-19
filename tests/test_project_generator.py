@@ -1,25 +1,102 @@
-import shutil
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
+    PlannedDirectory,
     PlannedFile,
     PlannedRemoval,
 )
+from boilr_generator.core.project import ResolvedProject
 from boilr_generator.exceptions import (
     FileConflictError,
     OutputDirectoryError,
     SourceNotFoundError,
     SourceReadError,
+    StaleGenerationPlanError,
     UnsafePathError,
 )
 from boilr_generator.generation import ProjectGenerator
+from boilr_generator.generation.filesystem import (
+    capture_output_state,
+)
 from boilr_generator.modules.schemas import (
     CopySource,
     RenderSource,
 )
 
+FilesystemSnapshotEntry = tuple[
+    str,
+    bytes | str | None,
+    int,
+]
+
+
+def snapshot_filesystem(
+    root: Path,
+) -> dict[str, FilesystemSnapshotEntry]:
+    """Capture paths, types, contents, and permission modes."""
+    if not root.exists():
+        return {}
+
+    paths = [
+        root,
+        *sorted(root.rglob("*")),
+    ]
+    snapshot: dict[
+        str,
+        FilesystemSnapshotEntry,
+    ] = {}
+
+    for path in paths:
+        relative_path = (
+            "."
+            if path == root
+            else path.relative_to(root).as_posix()
+        )
+        mode = path.lstat().st_mode & 0o777
+
+        if path.is_symlink():
+            entry_type = "symlink"
+            content: bytes | str | None = str(
+                path.readlink()
+            )
+        elif path.is_dir():
+            entry_type = "directory"
+            content = None
+        else:
+            entry_type = "file"
+            content = path.read_bytes()
+
+        snapshot[relative_path] = (
+            entry_type,
+            content,
+            mode,
+        )
+
+    return snapshot
+
+
+def project_with_copy_strategy(
+    resolved_project: ResolvedProject,
+    strategy: str,
+) -> ResolvedProject:
+    """Return a project using one selected Django copy strategy."""
+    project = resolved_project.model_copy(deep=True)
+    django = project.get_module("django")
+
+    assert django is not None
+    assert django.manifest.sources.copy_sources
+
+    copy_source = django.manifest.sources.copy_sources[0]
+    django.manifest.sources.copy_sources[0] = (
+        copy_source.model_copy(
+            update={"strategy": strategy},
+        )
+    )
+
+    return project
 
 def test_project_generator_writes_env_file(
     tmp_path,
@@ -108,20 +185,372 @@ def test_project_generator_creates_generation_plan(
     assert "backend" in plan.docker_services or len(plan.docker_services) > 0
     assert len(plan.env_variables) > 0
 
-def test_project_generator_plan_does_not_write_files(
-        registry, 
-        manifest, 
-        tmp_path,
+def test_project_generator_plan_captures_missing_output_state(
+    registry,
+    manifest,
+    tmp_path,
 ):
-    generator = ProjectGenerator(registry)
+    output_path = tmp_path / "missing-output"
 
-    generator.plan(
+    plan = ProjectGenerator(registry).plan(
         manifest=manifest,
-        output_path=tmp_path,
+        output_path=output_path,
     )
 
-    assert not (tmp_path / "docker-compose.yml").exists()
-    assert not (tmp_path / ".env").exists()
+    assert len(plan.initial_output_state) == 1
+
+    root_state = plan.initial_output_state[0]
+
+    assert root_state.path == output_path
+    assert root_state.relative_path == "."
+    assert root_state.exists is False
+    assert root_state.kind is None
+    assert output_path.exists() is False
+
+
+def test_project_generator_plan_captures_existing_output_state(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "existing-output"
+    nested_directory = output_path / "existing"
+    env_file = output_path / ".env"
+    nested_file = nested_directory / "data.bin"
+
+    nested_directory.mkdir(parents=True)
+
+    env_content = b"ORIGINAL=value\n"
+    nested_content = b"\x00existing\xff"
+
+    env_file.write_bytes(env_content)
+    nested_file.write_bytes(nested_content)
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    state_by_path = {
+        state.relative_path: state
+        for state in plan.initial_output_state
+    }
+
+    assert set(state_by_path) == {
+        ".",
+        ".env",
+        "existing",
+        "existing/data.bin",
+    }
+
+    root_state = state_by_path["."]
+    env_state = state_by_path[".env"]
+    nested_state = state_by_path[
+        "existing/data.bin"
+    ]
+
+    assert root_state.kind == "directory"
+
+    assert env_state.kind == "file"
+    assert env_state.content_size == len(env_content)
+    assert env_state.content_sha256 == sha256(
+        env_content
+    ).hexdigest()
+
+    assert nested_state.kind == "file"
+    assert nested_state.content_size == len(
+        nested_content
+    )
+    assert nested_state.content_sha256 == sha256(
+        nested_content
+    ).hexdigest()
+
+    planned_env = next(
+        file
+        for file in plan.files
+        if file.relative_destination_path == ".env"
+    )
+
+    assert planned_env.action == "overwrite"
+
+def test_project_generator_plan_does_not_create_missing_output(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "missing-output"
+    before = snapshot_filesystem(output_path)
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    assert plan.files
+    assert output_path.exists() is False
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_plan_does_not_modify_existing_output(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "existing-output"
+    nested_path = output_path / "existing"
+
+    nested_path.mkdir(parents=True)
+    (output_path / ".env").write_bytes(
+        b"ORIGINAL=value\n"
+    )
+    (nested_path / "keep.bin").write_bytes(
+        b"\x00original\xff"
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    env_file = next(
+        file
+        for file in plan.files
+        if file.relative_destination_path == ".env"
+    )
+
+    assert env_file.action == "overwrite"
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_clean_plan_does_not_modify_output(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "clean-output"
+    existing_path = output_path / "nested"
+
+    existing_path.mkdir(parents=True)
+    (existing_path / "keep.txt").write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    assert plan.clean_output is True
+    assert all(
+        file.action == "create"
+        for file in plan.files
+    )
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_replace_plan_does_not_remove_target(
+    registry,
+    manifest,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "replace-output"
+    destination = output_path / "backend" / "apps"
+
+    destination.mkdir(parents=True)
+    existing_file = destination / "existing.txt"
+    existing_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    project = project_with_copy_strategy(
+        resolved_project,
+        "replace",
+    )
+    generator = ProjectGenerator(registry)
+
+    monkeypatch.setattr(
+        generator.resolver,
+        "resolve",
+        lambda _: project,
+    )
+
+    before = snapshot_filesystem(output_path)
+    relative_destination = destination.relative_to(
+        output_path
+    )
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    expected_file_path = (
+        relative_destination / "existing.txt"
+    ).as_posix()
+    expected_root_path = (
+        relative_destination.as_posix()
+    )
+
+    assert destination in {
+        directory.path
+        for directory in plan.directories
+    }
+
+    assert [
+        removal.relative_path
+        for removal in plan.removals
+    ] == [
+        expected_file_path,
+        expected_root_path,
+    ]
+
+    assert [
+        removal.kind
+        for removal in plan.removals
+    ] == [
+        "file",
+        "directory",
+    ]
+
+    assert all(
+        removal.reason == "replace"
+        for removal in plan.removals
+    )
+    assert all(
+        removal.module == "django"
+        for removal in plan.removals
+    )
+
+    assert (
+        plan.summary["replace_removals_count"]
+        == 2
+    )
+    assert existing_file.exists() is True
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_skip_plan_does_not_modify_target(
+    registry,
+    manifest,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "skip-output"
+    destination = output_path / "backend" / "apps"
+
+    destination.mkdir(parents=True)
+    existing_file = destination / "existing.txt"
+    existing_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    project = project_with_copy_strategy(
+        resolved_project,
+        "skip",
+    )
+    generator = ProjectGenerator(registry)
+
+    monkeypatch.setattr(
+        generator.resolver,
+        "resolve",
+        lambda _: project,
+    )
+
+    before = snapshot_filesystem(output_path)
+    relative_destination = destination.relative_to(
+        output_path
+    )
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    skipped_files = [
+        file
+        for file in plan.files
+        if Path(
+            file.relative_destination_path
+        ).is_relative_to(relative_destination)
+    ]
+
+    assert skipped_files
+    assert all(
+        file.action == "skip"
+        for file in skipped_files
+    )
+    assert all(
+        (
+            directory.path != destination
+            and destination
+            not in directory.path.parents
+        )
+        for directory in plan.directories
+    )
+    assert existing_file.exists() is True
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_failed_plan_does_not_modify_output(
+    registry,
+    manifest,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "failed-output"
+    output_path.mkdir()
+
+    protected_file = output_path / "protected.txt"
+    protected_file.write_text(
+        "keep",
+        encoding="utf-8",
+    )
+
+    project = resolved_project.model_copy(deep=True)
+    postgres = project.get_module("postgres")
+
+    assert postgres is not None
+
+    postgres.manifest.sources.render = [
+        RenderSource.model_validate(
+            {
+                "from": "missing-template.j2",
+                "to": "generated.txt",
+            }
+        )
+    ]
+
+    generator = ProjectGenerator(registry)
+
+    monkeypatch.setattr(
+        generator.resolver,
+        "resolve",
+        lambda _: project,
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    with pytest.raises(SourceNotFoundError):
+        generator.plan(
+            manifest=manifest,
+            output_path=output_path,
+            clean=True,
+        )
+
+    assert protected_file.exists() is True
+    assert snapshot_filesystem(output_path) == before
 
 def test_project_generator_execute_writes_files(
     registry, 
@@ -457,6 +886,246 @@ def test_project_generator_execute_uses_plan_only(
             == planned_file.content
         )
 
+def test_execute_creates_only_planned_directories(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    generator = ProjectGenerator(registry)
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    expected_paths = [
+        directory.path
+        for directory in plan.directories
+    ]
+    mkdir_calls = []
+    original_mkdir = Path.mkdir
+
+    def track_mkdir(
+        path,
+        *args,
+        **kwargs,
+    ):
+        mkdir_calls.append(
+            (path, args, kwargs)
+        )
+        return original_mkdir(
+            path,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        Path,
+        "mkdir",
+        track_mkdir,
+    )
+
+    generator.execute(plan)
+
+    assert expected_paths
+    assert [
+        path
+        for path, _, _ in mkdir_calls
+    ] == expected_paths
+    assert all(
+        args == () and kwargs == {}
+        for _, args, kwargs in mkdir_calls
+    )
+
+
+def test_execute_uses_planned_removal_kinds(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    nested_path = output_path / "nested"
+    removed_file = nested_path / "removed.txt"
+
+    nested_path.mkdir(parents=True)
+    removed_file.write_text(
+        "remove",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    expected_unlinks = [
+        removal.path
+        for removal in plan.removals
+        if removal.kind in {
+            "file",
+            "symlink",
+        }
+    ]
+    expected_rmdirs = [
+        removal.path
+        for removal in plan.removals
+        if removal.kind == "directory"
+    ]
+
+    unlink_calls = []
+    rmdir_calls = []
+    original_unlink = Path.unlink
+    original_rmdir = Path.rmdir
+
+    def track_unlink(
+        path,
+        *args,
+        **kwargs,
+    ):
+        unlink_calls.append(path)
+        return original_unlink(
+            path,
+            *args,
+            **kwargs,
+        )
+
+    def track_rmdir(
+        path,
+        *args,
+        **kwargs,
+    ):
+        rmdir_calls.append(path)
+        return original_rmdir(
+            path,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        Path,
+        "unlink",
+        track_unlink,
+    )
+    monkeypatch.setattr(
+        Path,
+        "rmdir",
+        track_rmdir,
+    )
+
+    generator.execute(plan)
+
+    assert expected_unlinks
+    assert expected_rmdirs
+    assert unlink_calls == expected_unlinks
+    assert rmdir_calls == expected_rmdirs
+
+def test_project_generator_clean_plan_contains_exact_removals(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "clean-output"
+    empty_directory = output_path / "empty"
+    nested_directory = output_path / "nested"
+    nested_file = nested_directory / "data.bin"
+    root_file = output_path / "root.txt"
+
+    empty_directory.mkdir(parents=True)
+    nested_directory.mkdir()
+    nested_file.write_bytes(b"\x00nested\xff")
+    root_file.write_text(
+        "root",
+        encoding="utf-8",
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    assert [
+        removal.relative_path
+        for removal in plan.removals
+    ] == [
+        "nested/data.bin",
+        "empty",
+        "nested",
+        "root.txt",
+        ".",
+    ]
+
+    assert [
+        removal.kind
+        for removal in plan.removals
+    ] == [
+        "file",
+        "directory",
+        "directory",
+        "file",
+        "directory",
+    ]
+
+    assert all(
+        removal.reason == "clean"
+        for removal in plan.removals
+    )
+    assert all(
+        removal.module is None
+        for removal in plan.removals
+    )
+
+    data = plan.to_dict()
+
+    assert data["summary"]["removals_count"] == 5
+    assert (
+        data["summary"]["clean_removals_count"]
+        == 5
+    )
+    assert (
+        data["summary"]["replace_removals_count"]
+        == 0
+    )
+
+    planned_directory_paths = {
+        directory.path
+        for directory in plan.directories
+    }
+
+    assert output_path in planned_directory_paths
+    assert empty_directory not in planned_directory_paths
+    assert nested_directory not in planned_directory_paths
+
+    assert snapshot_filesystem(output_path) == before
+
+
+def test_project_generator_clean_plan_has_no_removals_for_missing_output(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "missing-output"
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    assert plan.clean_output is True
+    assert plan.removals == []
+    assert (
+        plan.summary["clean_removals_count"]
+        == 0
+    )
+    assert output_path.exists() is False
 
 def test_project_generator_clean_is_planned(
     registry,
@@ -554,6 +1223,14 @@ def test_copy_strategy_replace_plans_removal(
         "old",
         encoding="utf-8",
     )
+    old_directory = destination / "old"
+    old_directory.mkdir()
+
+    nested_old_file = old_directory / "nested.txt"
+    nested_old_file.write_text(
+        "nested old",
+        encoding="utf-8",
+    )
 
     generator = ProjectGenerator(registry)
 
@@ -576,10 +1253,44 @@ def test_copy_strategy_replace_plans_removal(
         file.action == "create"
         for file in files
     )
-    assert len(removals) == 1
-    assert removals[0].path == destination
-    assert removals[0].relative_path == "target"
-    assert removals[0].reason == "replace"
+    assert [
+        removal.relative_path
+        for removal in removals
+    ] == [
+        "target/old/nested.txt",
+        "target/old",
+        "target/old.txt",
+        "target",
+    ]
+
+    assert [
+        removal.kind
+        for removal in removals
+    ] == [
+        "file",
+        "directory",
+        "file",
+        "directory",
+    ]
+
+    assert [
+        removal.path
+        for removal in removals
+    ] == [
+        nested_old_file,
+        old_directory,
+        destination / "old.txt",
+        destination,
+    ]
+
+    assert all(
+        removal.reason == "replace"
+        for removal in removals
+    )
+    assert all(
+        removal.module == "example"
+        for removal in removals
+    )
 
 def test_copy_strategy_replace_executes_removal(
     registry,
@@ -606,6 +1317,9 @@ def test_copy_strategy_replace_executes_removal(
     )
 
     generator = ProjectGenerator(registry)
+    initial_output_state = capture_output_state(
+        output_path
+    )
 
     files, removals = generator._plan_copy_source(
         module_key="example",
@@ -622,11 +1336,21 @@ def test_copy_strategy_replace_executes_removal(
             "modules.example.sources.copy[0].from"
         ),
         clean=False,
+        initial_output_state=initial_output_state,
+    )
+
+    directories = generator._plan_directories(
+        output_path=output_path,
+        initial_output_state=initial_output_state,
+        removals=removals,
+        files=files,
     )
 
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=initial_output_state,
+        directories=directories,
         files=files,
         removals=removals,
     )
@@ -659,12 +1383,16 @@ def test_execute_rejects_unsafe_removal(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         removals=[
             PlannedRemoval(
                 path=outside_path,
                 relative_path="../outside",
                 module="example",
                 reason="replace",
+                kind="directory",
             )
         ],
     )
@@ -847,6 +1575,9 @@ def test_execute_rejects_unsafe_file_destination(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         files=[
             PlannedFile(
                 source_path=None,
@@ -1114,6 +1845,9 @@ def test_execute_revalidates_clean_output_directory(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=protected_path,
+        initial_output_state=capture_output_state(
+            protected_path
+        ),
         clean_output=True,
     )
 
@@ -1235,7 +1969,7 @@ def test_copy_source_wraps_directory_listing_error(
 
 def test_execute_wraps_clean_removal_error(
     registry,
-    resolved_project,
+    manifest,
     tmp_path,
     monkeypatch,
 ):
@@ -1248,38 +1982,55 @@ def test_execute_wraps_clean_removal_error(
         encoding="utf-8",
     )
 
-    original_rmtree = shutil.rmtree
-
-    def fail_clean(path, *args, **kwargs):
-        if Path(path) == output_path:
-            raise PermissionError(13, "Access denied")
-
-        return original_rmtree(path, *args, **kwargs)
-
-    monkeypatch.setattr(
-        shutil,
-        "rmtree",
-        fail_clean,
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
     )
 
-    plan = GenerationPlan(
-        resolved_project=resolved_project,
-        output_path=output_path,
-        clean_output=True,
+    original_unlink = Path.unlink
+
+    def fail_clean_removal(
+        path,
+        *args,
+        **kwargs,
+    ):
+        if path == protected_file:
+            raise PermissionError(
+                13,
+                "Access denied",
+            )
+
+        return original_unlink(
+            path,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        Path,
+        "unlink",
+        fail_clean_removal,
     )
 
     with pytest.raises(
         OutputDirectoryError
     ) as error_info:
-        ProjectGenerator(registry).execute(plan)
+        generator.execute(plan)
 
     error = error_info.value
 
-    assert isinstance(error.__cause__, PermissionError)
-    assert error.context["operation"] == "clean_output"
+    assert isinstance(
+        error.__cause__,
+        PermissionError,
+    )
+    assert error.context["operation"] == "remove_path"
+    assert error.context["path"] == str(
+        protected_file
+    )
     assert error.context["errno"] == 13
     assert protected_file.exists() is True
-
 
 def test_execute_wraps_output_directory_creation_error(
     registry,
@@ -1314,7 +2065,7 @@ def test_execute_wraps_output_directory_creation_error(
 
     assert isinstance(error.__cause__, PermissionError)
     assert error.context["operation"] == (
-        "create_output_directory"
+        "create_directory"
     )
     assert error.context["errno"] == 13
 
@@ -1336,6 +2087,9 @@ def test_execute_wraps_parent_directory_creation_error(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         files=[
             PlannedFile(
                 source_path=None,
@@ -1346,6 +2100,13 @@ def test_execute_wraps_parent_directory_creation_error(
                 operation="generate",
                 action="create",
                 content=b"content",
+            )
+        ],
+        directories=[
+            PlannedDirectory(
+                path=nested_path,
+                relative_path="nested",
+                reason="parent",
             )
         ],
     )
@@ -1369,9 +2130,9 @@ def test_execute_wraps_parent_directory_creation_error(
     ) as error_info:
         ProjectGenerator(registry).execute(plan)
 
-    assert error_info.value.context["operation"] == (
-        "create_parent_directory"
-    )
+    assert error_info.value.context[
+        "operation"
+    ] == "create_directory"
     assert destination_path.exists() is False
 
 
@@ -1389,6 +2150,9 @@ def test_execute_wraps_file_write_error(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         files=[
             PlannedFile(
                 source_path=None,
@@ -1442,6 +2206,9 @@ def test_execute_wraps_file_mode_error(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         files=[
             PlannedFile(
                 source_path=None,
@@ -1499,12 +2266,16 @@ def test_execute_wraps_planned_removal_error(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         removals=[
             PlannedRemoval(
                 path=removal_path,
                 relative_path="remove.txt",
                 module="example",
                 reason="replace",
+                kind="file",
             )
         ],
     )
@@ -1534,3 +2305,252 @@ def test_execute_wraps_planned_removal_error(
     assert error.context["operation"] == "remove_path"
     assert error.context["errno"] == 13
     assert removal_path.exists() is True
+
+def test_project_generator_plan_contains_required_directories(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "missing-output"
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    directory_paths = {
+        directory.path
+        for directory in plan.directories
+    }
+    relative_paths = [
+        directory.relative_path
+        for directory in plan.directories
+    ]
+
+    assert plan.directories
+    assert plan.directories[0].path == output_path
+    assert plan.directories[0].relative_path == "."
+    assert plan.directories[0].reason == "output"
+    assert plan.directories[0].module is None
+
+    assert len(directory_paths) == len(
+        plan.directories
+    )
+
+    for planned_file in plan.files:
+        if planned_file.action == "skip":
+            continue
+
+        parent = planned_file.destination_path.parent
+
+        while parent != output_path:
+            assert parent in directory_paths
+            parent = parent.parent
+
+    assert relative_paths == sorted(
+        relative_paths,
+        key=lambda relative_path: (
+            (
+                0
+                if relative_path == "."
+                else len(relative_path.split("/"))
+            ),
+            relative_path,
+        ),
+    )
+
+    assert all(
+        directory.reason == "parent"
+        for directory in plan.directories[1:]
+    )
+    assert all(
+        directory.path.exists() is False
+        for directory in plan.directories
+    )
+    assert (
+        plan.summary["directories_to_create"]
+        == len(plan.directories)
+    )
+    assert output_path.exists() is False
+
+def test_project_generator_plan_rejects_directory_path_conflict(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "conflicting-output"
+    output_path.mkdir()
+
+    blocking_file = output_path / "backend"
+    blocking_file.write_text(
+        "blocks the backend directory",
+        encoding="utf-8",
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    with pytest.raises(
+        FileConflictError
+    ) as error_info:
+        ProjectGenerator(registry).plan(
+            manifest=manifest,
+            output_path=output_path,
+        )
+
+    error = error_info.value
+
+    assert error.code == "file_conflict"
+    assert error.field_path == (
+        "generation.directories[backend]"
+    )
+    assert error.context["reason"] == (
+        "directory_path_conflict"
+    )
+    assert error.context["relative_path"] == "backend"
+    assert error.context["existing_kind"] == "file"
+    assert blocking_file.exists() is True
+    assert snapshot_filesystem(output_path) == before
+
+def test_execute_rejects_missing_initial_output_state(
+    registry,
+    resolved_project,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+    )
+    state_before_execute = capture_output_state(
+        output_path
+    )
+
+    with pytest.raises(
+        StaleGenerationPlanError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert error.code == "stale_generation_plan"
+    assert error.context["reason"] == (
+        "missing_initial_output_state"
+    )
+    assert capture_output_state(
+        output_path
+    ) == state_before_execute
+
+
+def test_execute_rejects_changed_output_state_before_mutation(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    preserved_path = output_path / "preserved.txt"
+    preserved_path.write_text(
+        "before",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    preserved_path.write_text(
+        "after",
+        encoding="utf-8",
+    )
+    state_before_execute = capture_output_state(
+        output_path
+    )
+
+    with pytest.raises(
+        StaleGenerationPlanError
+    ) as error_info:
+        generator.execute(plan)
+
+    error = error_info.value
+
+    assert error.context["reason"] == (
+        "output_state_changed"
+    )
+    assert error.context["changed_paths"] == [
+        "preserved.txt"
+    ]
+    assert capture_output_state(
+        output_path
+    ) == state_before_execute
+
+
+def test_execute_rejects_stale_clean_plan_before_removal(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    existing_path = output_path / "existing.txt"
+    existing_path.write_text(
+        "existing",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    late_path = output_path / "late.txt"
+    late_path.write_text(
+        "late",
+        encoding="utf-8",
+    )
+    state_before_execute = capture_output_state(
+        output_path
+    )
+
+    with pytest.raises(
+        StaleGenerationPlanError
+    ) as error_info:
+        generator.execute(plan)
+
+    assert error_info.value.context[
+        "changed_paths"
+    ] == ["late.txt"]
+    assert capture_output_state(
+        output_path
+    ) == state_before_execute
+
+def test_project_generator_plan_uses_posix_relative_file_paths(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    relative_paths = [
+        file.relative_destination_path
+        for file in plan.files
+    ]
+
+    assert any(
+        "/" in relative_path
+        for relative_path in relative_paths
+    )
+    assert all(
+        "\\" not in relative_path
+        for relative_path in relative_paths
+    )
