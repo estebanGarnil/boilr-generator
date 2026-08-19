@@ -8,6 +8,7 @@ import yaml
 
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
+    PlannedDirectory,
     PlannedFile,
     PlannedPathState,
     PlannedRemoval,
@@ -150,10 +151,18 @@ class ProjectGenerator:
 
         self._validate_file_conflicts(files)
 
+        directories = self._plan_directories(
+            output_path=output_path,
+            initial_output_state=initial_output_state,
+            removals=removals,
+            files=files,
+        )
+
         return GenerationPlan(
             resolved_project=resolved_project,
             output_path=output_path,
             initial_output_state=initial_output_state,
+            directories=directories,
             files=files,
             docker_services=list(
                 docker_compose.get("services", {}).keys()
@@ -232,6 +241,134 @@ class ProjectGenerator:
             states=subtree_states,
             reason="replace",
             module_key=module_key,
+        )
+
+    def _plan_directories(
+        self,
+        *,
+        output_path: Path,
+        initial_output_state: list[PlannedPathState],
+        removals: list[PlannedRemoval],
+        files: list[PlannedFile],
+    ) -> list[PlannedDirectory]:
+        """Plan exact directory creations in parent-first order."""
+        required_directories: dict[
+            Path,
+            str | None,
+        ] = {
+            output_path: None,
+        }
+
+        for planned_file in files:
+            if planned_file.action == "skip":
+                continue
+
+            parent = planned_file.destination_path.parent
+
+            while parent != output_path:
+                required_directories.setdefault(
+                    parent,
+                    planned_file.module,
+                )
+                parent = parent.parent
+
+        initial_state_by_path = {
+            state.path: state
+            for state in initial_output_state
+        }
+        removal_paths = {
+            removal.path
+            for removal in removals
+        }
+
+        directories: list[PlannedDirectory] = []
+
+        for directory_path, module_key in (
+            required_directories.items()
+        ):
+            relative_path = (
+                "."
+                if directory_path == output_path
+                else directory_path.relative_to(
+                    output_path
+                ).as_posix()
+            )
+
+            if directory_path in removal_paths:
+                directories.append(
+                    PlannedDirectory(
+                        path=directory_path,
+                        relative_path=relative_path,
+                        reason=(
+                            "output"
+                            if directory_path
+                            == output_path
+                            else "parent"
+                        ),
+                        module=module_key,
+                    )
+                )
+                continue
+
+            current_state = initial_state_by_path.get(
+                directory_path
+            )
+
+            if (
+                current_state is None
+                or not current_state.exists
+            ):
+                directories.append(
+                    PlannedDirectory(
+                        path=directory_path,
+                        relative_path=relative_path,
+                        reason=(
+                            "output"
+                            if directory_path
+                            == output_path
+                            else "parent"
+                        ),
+                        module=module_key,
+                    )
+                )
+                continue
+
+            if current_state.kind == "directory":
+                continue
+
+            raise FileConflictError(
+                (
+                    "A required directory path is occupied "
+                    f"by a {current_state.kind}: "
+                    f"'{relative_path}'."
+                ),
+                module_key=module_key,
+                field_path=(
+                    "generation.directories"
+                    f"[{relative_path}]"
+                ),
+                context={
+                    "reason": "directory_path_conflict",
+                    "path": str(directory_path),
+                    "relative_path": relative_path,
+                    "existing_kind": current_state.kind,
+                },
+                suggestion=(
+                    "Remove or rename the conflicting path, "
+                    "or choose another generation destination."
+                ),
+            )
+
+        return sorted(
+            directories,
+            key=lambda directory: (
+                len(
+                    PurePosixPath(
+                        directory.relative_path
+                    ).parts
+                ),
+                directory.relative_path,
+            ),
         )
 
     def _validate_clean_output_path(

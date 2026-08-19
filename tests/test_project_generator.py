@@ -396,6 +396,11 @@ def test_project_generator_replace_plan_does_not_remove_target(
         relative_destination.as_posix()
     )
 
+    assert destination in {
+        directory.path
+        for directory in plan.directories
+    }
+
     assert [
         removal.relative_path
         for removal in plan.removals
@@ -480,6 +485,14 @@ def test_project_generator_skip_plan_does_not_modify_target(
     assert all(
         file.action == "skip"
         for file in skipped_files
+    )
+    assert all(
+        (
+            directory.path != destination
+            and destination
+            not in directory.path.parents
+        )
+        for directory in plan.directories
     )
     assert existing_file.exists() is True
     assert snapshot_filesystem(output_path) == before
@@ -938,6 +951,15 @@ def test_project_generator_clean_plan_contains_exact_removals(
         data["summary"]["replace_removals_count"]
         == 0
     )
+
+    planned_directory_paths = {
+        directory.path
+        for directory in plan.directories
+    }
+
+    assert output_path in planned_directory_paths
+    assert empty_directory not in planned_directory_paths
+    assert nested_directory not in planned_directory_paths
 
     assert snapshot_filesystem(output_path) == before
 
@@ -2081,3 +2103,108 @@ def test_execute_wraps_planned_removal_error(
     assert error.context["operation"] == "remove_path"
     assert error.context["errno"] == 13
     assert removal_path.exists() is True
+
+def test_project_generator_plan_contains_required_directories(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "missing-output"
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    directory_paths = {
+        directory.path
+        for directory in plan.directories
+    }
+    relative_paths = [
+        directory.relative_path
+        for directory in plan.directories
+    ]
+
+    assert plan.directories
+    assert plan.directories[0].path == output_path
+    assert plan.directories[0].relative_path == "."
+    assert plan.directories[0].reason == "output"
+    assert plan.directories[0].module is None
+
+    assert len(directory_paths) == len(
+        plan.directories
+    )
+
+    for planned_file in plan.files:
+        if planned_file.action == "skip":
+            continue
+
+        parent = planned_file.destination_path.parent
+
+        while parent != output_path:
+            assert parent in directory_paths
+            parent = parent.parent
+
+    assert relative_paths == sorted(
+        relative_paths,
+        key=lambda relative_path: (
+            (
+                0
+                if relative_path == "."
+                else len(relative_path.split("/"))
+            ),
+            relative_path,
+        ),
+    )
+
+    assert all(
+        directory.reason == "parent"
+        for directory in plan.directories[1:]
+    )
+    assert all(
+        directory.path.exists() is False
+        for directory in plan.directories
+    )
+    assert (
+        plan.summary["directories_to_create"]
+        == len(plan.directories)
+    )
+    assert output_path.exists() is False
+
+def test_project_generator_plan_rejects_directory_path_conflict(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "conflicting-output"
+    output_path.mkdir()
+
+    blocking_file = output_path / "backend"
+    blocking_file.write_text(
+        "blocks the backend directory",
+        encoding="utf-8",
+    )
+
+    before = snapshot_filesystem(output_path)
+
+    with pytest.raises(
+        FileConflictError
+    ) as error_info:
+        ProjectGenerator(registry).plan(
+            manifest=manifest,
+            output_path=output_path,
+        )
+
+    error = error_info.value
+
+    assert error.code == "file_conflict"
+    assert error.field_path == (
+        "generation.directories[backend]"
+    )
+    assert error.context["reason"] == (
+        "directory_path_conflict"
+    )
+    assert error.context["relative_path"] == "backend"
+    assert error.context["existing_kind"] == "file"
+    assert blocking_file.exists() is True
+    assert snapshot_filesystem(output_path) == before
