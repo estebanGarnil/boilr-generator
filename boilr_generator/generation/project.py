@@ -1,21 +1,24 @@
 """Project generation planning and execution."""
 
-import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
 import yaml
 
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
+    PlannedDirectory,
     PlannedFile,
+    PlannedPathState,
     PlannedRemoval,
+    RemovalReason,
 )
 from boilr_generator.exceptions import (
     FileConflictError,
     OutputDirectoryError,
     SourceNotFoundError,
     SourceReadError,
+    StaleGenerationPlanError,
     UnsafePathError,
 )
 from boilr_generator.generation.context import (
@@ -24,6 +27,10 @@ from boilr_generator.generation.context import (
 from boilr_generator.generation.docker import DockerComposeGenerator
 from boilr_generator.generation.env import EnvGenerator
 from boilr_generator.generation.files import FileGenerator
+from boilr_generator.generation.filesystem import (
+    capture_output_state,
+    find_changed_output_paths,
+)
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.modules.schemas import CopySource, RenderSource
@@ -48,12 +55,25 @@ class ProjectGenerator:
     ) -> GenerationPlan:
         """Create a generation plan without writing files."""
         output_path = Path(output_path)
+
         if clean:
             self._validate_clean_output_path(output_path)
+
         resolved_project = self.resolver.resolve(manifest)
+        initial_output_state = capture_output_state(
+            output_path
+        )
 
         files: list[PlannedFile] = []
-        removals: list[PlannedRemoval] = []
+        removals = (
+            self._plan_removals_from_state(
+                states=initial_output_state,
+                reason="clean",
+                module_key=None,
+            )
+            if clean
+            else []
+        )
 
         for module in resolved_project.ordered_modules():
             module_key = module.manifest.meta.key
@@ -73,6 +93,9 @@ class ProjectGenerator:
                         module_path=module_path,
                         source=source,
                         output_path=output_path,
+                        initial_output_state=(
+                            initial_output_state
+                        ),
                         field_path=(
                             f"modules.{module_key}.sources."
                             f"copy[{index}].from"
@@ -129,9 +152,18 @@ class ProjectGenerator:
 
         self._validate_file_conflicts(files)
 
+        directories = self._plan_directories(
+            output_path=output_path,
+            initial_output_state=initial_output_state,
+            removals=removals,
+            files=files,
+        )
+
         return GenerationPlan(
             resolved_project=resolved_project,
             output_path=output_path,
+            initial_output_state=initial_output_state,
+            directories=directories,
             files=files,
             docker_services=list(
                 docker_compose.get("services", {}).keys()
@@ -139,6 +171,205 @@ class ProjectGenerator:
             env_variables=list(env.keys()),
             clean_output=clean,
             removals=removals,
+        )
+
+    def _plan_removals_from_state(
+        self,
+        *,
+        states: list[PlannedPathState],
+        reason: RemovalReason,
+        module_key: str | None,
+    ) -> list[PlannedRemoval]:
+        """Build exact removals ordered deepest first."""
+        existing_states = [
+            state
+            for state in states
+            if state.exists
+        ]
+
+        ordered_states = sorted(
+            existing_states,
+            key=lambda state: (
+                -len(
+                    PurePosixPath(
+                        state.relative_path
+                    ).parts
+                ),
+                state.relative_path,
+            ),
+        )
+
+        return [
+            PlannedRemoval(
+                path=state.path,
+                relative_path=state.relative_path,
+                module=module_key,
+                reason=reason,
+                kind=state.kind,
+            )
+            for state in ordered_states
+        ]
+
+    def _plan_replace_removals(
+        self,
+        *,
+        destination_root: Path,
+        output_path: Path,
+        initial_output_state: list[PlannedPathState],
+        module_key: str,
+    ) -> list[PlannedRemoval]:
+        """Plan one exact replacement subtree."""
+        self._validate_removal_path(
+            path=destination_root,
+            output_path=output_path,
+            module_key=module_key,
+        )
+
+        subtree_states = [
+            state
+            for state in initial_output_state
+            if (
+                state.exists
+                and (
+                    state.path == destination_root
+                    or destination_root
+                    in state.path.parents
+                )
+            )
+        ]
+
+        return self._plan_removals_from_state(
+            states=subtree_states,
+            reason="replace",
+            module_key=module_key,
+        )
+
+    def _plan_directories(
+        self,
+        *,
+        output_path: Path,
+        initial_output_state: list[PlannedPathState],
+        removals: list[PlannedRemoval],
+        files: list[PlannedFile],
+    ) -> list[PlannedDirectory]:
+        """Plan exact directory creations in parent-first order."""
+        required_directories: dict[
+            Path,
+            str | None,
+        ] = {
+            output_path: None,
+        }
+
+        for planned_file in files:
+            if planned_file.action == "skip":
+                continue
+
+            parent = planned_file.destination_path.parent
+
+            while parent != output_path:
+                required_directories.setdefault(
+                    parent,
+                    planned_file.module,
+                )
+                parent = parent.parent
+
+        initial_state_by_path = {
+            state.path: state
+            for state in initial_output_state
+        }
+        removal_paths = {
+            removal.path
+            for removal in removals
+        }
+
+        directories: list[PlannedDirectory] = []
+
+        for directory_path, module_key in (
+            required_directories.items()
+        ):
+            relative_path = (
+                "."
+                if directory_path == output_path
+                else directory_path.relative_to(
+                    output_path
+                ).as_posix()
+            )
+
+            if directory_path in removal_paths:
+                directories.append(
+                    PlannedDirectory(
+                        path=directory_path,
+                        relative_path=relative_path,
+                        reason=(
+                            "output"
+                            if directory_path
+                            == output_path
+                            else "parent"
+                        ),
+                        module=module_key,
+                    )
+                )
+                continue
+
+            current_state = initial_state_by_path.get(
+                directory_path
+            )
+
+            if (
+                current_state is None
+                or not current_state.exists
+            ):
+                directories.append(
+                    PlannedDirectory(
+                        path=directory_path,
+                        relative_path=relative_path,
+                        reason=(
+                            "output"
+                            if directory_path
+                            == output_path
+                            else "parent"
+                        ),
+                        module=module_key,
+                    )
+                )
+                continue
+
+            if current_state.kind == "directory":
+                continue
+
+            raise FileConflictError(
+                (
+                    "A required directory path is occupied "
+                    f"by a {current_state.kind}: "
+                    f"'{relative_path}'."
+                ),
+                module_key=module_key,
+                field_path=(
+                    "generation.directories"
+                    f"[{relative_path}]"
+                ),
+                context={
+                    "reason": "directory_path_conflict",
+                    "path": str(directory_path),
+                    "relative_path": relative_path,
+                    "existing_kind": current_state.kind,
+                },
+                suggestion=(
+                    "Remove or rename the conflicting path, "
+                    "or choose another generation destination."
+                ),
+            )
+
+        return sorted(
+            directories,
+            key=lambda directory: (
+                len(
+                    PurePosixPath(
+                        directory.relative_path
+                    ).parts
+                ),
+                directory.relative_path,
+            ),
         )
 
     def _validate_clean_output_path(
@@ -262,13 +493,28 @@ class ProjectGenerator:
         self,
         plan: GenerationPlan,
     ) -> None:
-        """Apply a complete plan without recalculating outputs."""
-        self._validate_file_conflicts(plan.files)
-
+        """Apply exactly the prepared filesystem contract."""
         output_path = plan.output_path
+        self._validate_initial_output_state(plan)
+
+        self._validate_file_conflicts(plan.files)
 
         if plan.clean_output:
             self._validate_clean_output_path(output_path)
+
+        for directory in plan.directories:
+            self._validate_destination_path(
+                path=directory.path,
+                output_path=output_path,
+                module_key=directory.module,
+                field_path=(
+                    "generation.directories."
+                    f"{directory.relative_path}"
+                ),
+                allow_output_root=(
+                    directory.reason == "output"
+                ),
+            )
 
         for planned_file in plan.files:
             self._validate_destination_path(
@@ -286,23 +532,16 @@ class ProjectGenerator:
                 path=removal.path,
                 output_path=output_path,
                 module_key=removal.module,
+                allow_output_root=(
+                    removal.reason == "clean"
+                ),
             )
 
-        if plan.clean_output and output_path.exists():
-            self._remove_clean_output(output_path)
-        else:
-            for removal in plan.removals:
-                self._execute_removal(
-                    removal=removal,
-                    output_path=output_path,
-                )
+        for removal in plan.removals:
+            self._execute_removal(removal)
 
-        self._create_output_directory(
-            path=output_path,
-            module_key=None,
-            field_path="generation.output_path",
-            operation="create_output_directory",
-        )
+        for directory in plan.directories:
+            self._create_planned_directory(directory)
 
         for planned_file in plan.files:
             if planned_file.action == "skip":
@@ -310,42 +549,86 @@ class ProjectGenerator:
 
             self._write_planned_file(planned_file)
 
-    def _remove_clean_output(
-        self,
-        output_path: Path,
+    @staticmethod
+    def _validate_initial_output_state(
+        plan: GenerationPlan,
     ) -> None:
-        """Remove a validated output directory."""
-        try:
-            shutil.rmtree(output_path)
-        except OSError as error:
-            self._raise_output_error(
-                path=output_path,
-                module_key=None,
-                field_path="generation.output_path",
-                operation="clean_output",
-                error=error,
+        """Reject a plan whose initial state is missing or stale."""
+        if not plan.initial_output_state:
+            raise StaleGenerationPlanError(
+                (
+                    "Cannot execute a generation plan without "
+                    "a captured initial output state."
+                ),
+                field_path=(
+                    "generation.initial_output_state"
+                ),
+                context={
+                    "reason": (
+                        "missing_initial_output_state"
+                    ),
+                    "output_path": str(
+                        plan.output_path
+                    ),
+                },
+                suggestion=(
+                    "Create a new plan immediately before "
+                    "executing it."
+                ),
             )
 
-    def _create_output_directory(
+        actual_output_state = capture_output_state(
+            plan.output_path
+        )
+        changed_paths = find_changed_output_paths(
+            plan.initial_output_state,
+            actual_output_state,
+        )
+
+        if not changed_paths:
+            return
+
+        raise StaleGenerationPlanError(
+            (
+                "Cannot execute the generation plan because "
+                "the output filesystem changed after planning."
+            ),
+            field_path="generation.initial_output_state",
+            context={
+                "reason": "output_state_changed",
+                "output_path": str(plan.output_path),
+                "changed_paths": changed_paths,
+                "expected_paths_count": len(
+                    plan.initial_output_state
+                ),
+                "actual_paths_count": len(
+                    actual_output_state
+                ),
+            },
+            suggestion=(
+                "Create a new plan from the current output "
+                "state before executing it."
+            ),
+        )
+
+    def _create_planned_directory(
         self,
-        *,
-        path: Path,
-        module_key: str | None,
-        field_path: str,
-        operation: str,
+        directory: PlannedDirectory,
     ) -> None:
-        """Create one output directory."""
+        """Create exactly one directory from the plan."""
+        field_path = (
+            "generation.directories."
+            f"{directory.relative_path}"
+        )
+
         try:
-            path.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
+            directory.path.mkdir()
         except OSError as error:
             self._raise_output_error(
-                path=path,
-                module_key=module_key,
+                path=directory.path,
+                module_key=directory.module,
                 field_path=field_path,
-                operation=operation,
+                operation="create_directory",
                 error=error,
             )
 
@@ -358,13 +641,6 @@ class ProjectGenerator:
         field_path = (
             "generation.files."
             f"{planned_file.relative_destination_path}"
-        )
-
-        self._create_output_directory(
-            path=destination_path.parent,
-            module_key=planned_file.module,
-            field_path=field_path,
-            operation="create_parent_directory",
         )
 
         try:
@@ -398,32 +674,19 @@ class ProjectGenerator:
 
     def _execute_removal(
         self,
-        *,
         removal: PlannedRemoval,
-        output_path: Path,
     ) -> None:
-        """Apply one safe removal from the prepared plan."""
-        self._validate_removal_path(
-            path=removal.path,
-            output_path=output_path,
-            module_key=removal.module,
-        )
-
+        """Remove exactly one path using its planned kind."""
         field_path = (
             "generation.removals."
             f"{removal.relative_path}"
         )
 
         try:
-            if (
-                removal.path.is_symlink()
-                or not removal.path.is_dir()
-            ):
-                removal.path.unlink()
+            if removal.kind == "directory":
+                removal.path.rmdir()
             else:
-                shutil.rmtree(removal.path)
-        except FileNotFoundError:
-            return
+                removal.path.unlink()
         except OSError as error:
             self._raise_output_error(
                 path=removal.path,
@@ -571,6 +834,9 @@ class ProjectGenerator:
         output_path: Path,
         field_path: str,
         clean: bool,
+        initial_output_state: (
+            list[PlannedPathState] | None
+        ) = None,
     ) -> tuple[list[PlannedFile], list[PlannedRemoval]]:
         """Plan one copy source and its replacement removals."""
         source_path = module_path / source.from_
@@ -659,21 +925,44 @@ class ProjectGenerator:
                     )
                 )
 
+        if initial_output_state is None:
+            initial_output_state = capture_output_state(
+                output_path
+            )
+
+        destination_state = next(
+            (
+                state
+                for state in initial_output_state
+                if state.path == destination_root
+            ),
+            None,
+        )
+        destination_exists = (
+            destination_state is not None
+            and destination_state.exists
+        )
+
         removals: list[PlannedRemoval] = []
         action_override: str | None = None
 
         if clean:
             action_override = "create"
-        elif destination_root.exists():
+        elif destination_exists:
             if source.strategy == "skip":
                 action_override = "skip"
 
             elif source.strategy == "replace":
                 action_override = "create"
-                removals.append(
-                    self._build_planned_removal(
-                        path=destination_root,
+                removals.extend(
+                    self._plan_replace_removals(
+                        destination_root=(
+                            destination_root
+                        ),
                         output_path=output_path,
+                        initial_output_state=(
+                            initial_output_state
+                        ),
                         module_key=module_key,
                     )
                 )
@@ -848,28 +1137,7 @@ class ProjectGenerator:
                 ),
             )
 
-        return str(relative_path)
-
-    def _build_planned_removal(
-        self,
-        *,
-        path: Path,
-        output_path: Path,
-        module_key: str,
-    ) -> PlannedRemoval:
-        """Build a safe removal contained by the output path."""
-        relative_path = self._validate_removal_path(
-            path=path,
-            output_path=output_path,
-            module_key=module_key,
-        )
-
-        return PlannedRemoval(
-            path=path,
-            relative_path=relative_path,
-            module=module_key,
-            reason="replace",
-        )
+        return relative_path.as_posix()
 
     def _validate_removal_path(
         self,
@@ -877,6 +1145,7 @@ class ProjectGenerator:
         path: Path,
         output_path: Path,
         module_key: str | None,
+        allow_output_root: bool = False,
     ) -> str:
         """Reject removal of or outside the output directory."""
         return self._validate_contained_path(
@@ -885,7 +1154,7 @@ class ProjectGenerator:
             module_key=module_key,
             field_path="generation.removals",
             path_kind="removal",
-            allow_root=False,
+            allow_root=allow_output_root,
         )
 
     def _build_planned_file(

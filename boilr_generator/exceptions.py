@@ -297,6 +297,12 @@ class OutputDirectoryError(ExecutionError):
     code = "output_directory_error"
 
 
+class StaleGenerationPlanError(ExecutionError):
+    """Raised when output state changed after planning."""
+
+    code = "stale_generation_plan"
+
+
 __all__ = [
     "AmbiguousProviderError",
     "AmbiguousRequirementError",
@@ -334,6 +340,7 @@ __all__ = [
     "ResolutionError",
     "SourceNotFoundError",
     "SourceReadError",
+    "StaleGenerationPlanError",
     "UnsafePathError",
     "TemplateRenderError",
     "UnknownExtensionPointError",
