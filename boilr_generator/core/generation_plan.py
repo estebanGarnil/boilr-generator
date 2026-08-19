@@ -76,9 +76,9 @@ class PlannedRemoval:
 
     path: Path
     relative_path: str
+    kind: PathKind
     module: str | None = None
     reason: RemovalReason = "replace"
-    kind: PathKind | None = None
 
 
 @dataclass(slots=True)

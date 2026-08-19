@@ -1,6 +1,5 @@
 """Project generation planning and execution."""
 
-import shutil
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
@@ -494,7 +493,7 @@ class ProjectGenerator:
         self,
         plan: GenerationPlan,
     ) -> None:
-        """Apply a complete plan without recalculating outputs."""
+        """Apply exactly the prepared filesystem contract."""
         output_path = plan.output_path
         self._validate_initial_output_state(plan)
 
@@ -502,6 +501,20 @@ class ProjectGenerator:
 
         if plan.clean_output:
             self._validate_clean_output_path(output_path)
+
+        for directory in plan.directories:
+            self._validate_destination_path(
+                path=directory.path,
+                output_path=output_path,
+                module_key=directory.module,
+                field_path=(
+                    "generation.directories."
+                    f"{directory.relative_path}"
+                ),
+                allow_output_root=(
+                    directory.reason == "output"
+                ),
+            )
 
         for planned_file in plan.files:
             self._validate_destination_path(
@@ -524,21 +537,11 @@ class ProjectGenerator:
                 ),
             )
 
-        if plan.clean_output and output_path.exists():
-            self._remove_clean_output(output_path)
-        else:
-            for removal in plan.removals:
-                self._execute_removal(
-                    removal=removal,
-                    output_path=output_path,
-                )
+        for removal in plan.removals:
+            self._execute_removal(removal)
 
-        self._create_output_directory(
-            path=output_path,
-            module_key=None,
-            field_path="generation.output_path",
-            operation="create_output_directory",
-        )
+        for directory in plan.directories:
+            self._create_planned_directory(directory)
 
         for planned_file in plan.files:
             if planned_file.action == "skip":
@@ -608,42 +611,24 @@ class ProjectGenerator:
             ),
         )
 
-    def _remove_clean_output(
+    def _create_planned_directory(
         self,
-        output_path: Path,
+        directory: PlannedDirectory,
     ) -> None:
-        """Remove a validated output directory."""
-        try:
-            shutil.rmtree(output_path)
-        except OSError as error:
-            self._raise_output_error(
-                path=output_path,
-                module_key=None,
-                field_path="generation.output_path",
-                operation="clean_output",
-                error=error,
-            )
+        """Create exactly one directory from the plan."""
+        field_path = (
+            "generation.directories."
+            f"{directory.relative_path}"
+        )
 
-    def _create_output_directory(
-        self,
-        *,
-        path: Path,
-        module_key: str | None,
-        field_path: str,
-        operation: str,
-    ) -> None:
-        """Create one output directory."""
         try:
-            path.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
+            directory.path.mkdir()
         except OSError as error:
             self._raise_output_error(
-                path=path,
-                module_key=module_key,
+                path=directory.path,
+                module_key=directory.module,
                 field_path=field_path,
-                operation=operation,
+                operation="create_directory",
                 error=error,
             )
 
@@ -656,13 +641,6 @@ class ProjectGenerator:
         field_path = (
             "generation.files."
             f"{planned_file.relative_destination_path}"
-        )
-
-        self._create_output_directory(
-            path=destination_path.parent,
-            module_key=planned_file.module,
-            field_path=field_path,
-            operation="create_parent_directory",
         )
 
         try:
@@ -696,32 +674,19 @@ class ProjectGenerator:
 
     def _execute_removal(
         self,
-        *,
         removal: PlannedRemoval,
-        output_path: Path,
     ) -> None:
-        """Apply one safe removal from the prepared plan."""
-        self._validate_removal_path(
-            path=removal.path,
-            output_path=output_path,
-            module_key=removal.module,
-        )
-
+        """Remove exactly one path using its planned kind."""
         field_path = (
             "generation.removals."
             f"{removal.relative_path}"
         )
 
         try:
-            if (
-                removal.path.is_symlink()
-                or not removal.path.is_dir()
-            ):
-                removal.path.unlink()
+            if removal.kind == "directory":
+                removal.path.rmdir()
             else:
-                shutil.rmtree(removal.path)
-        except FileNotFoundError:
-            return
+                removal.path.unlink()
         except OSError as error:
             self._raise_output_error(
                 path=removal.path,

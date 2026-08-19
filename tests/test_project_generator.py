@@ -1,10 +1,10 @@
-import shutil
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
+    PlannedDirectory,
     PlannedFile,
     PlannedRemoval,
 )
@@ -886,6 +886,144 @@ def test_project_generator_execute_uses_plan_only(
             == planned_file.content
         )
 
+def test_execute_creates_only_planned_directories(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    generator = ProjectGenerator(registry)
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    expected_paths = [
+        directory.path
+        for directory in plan.directories
+    ]
+    mkdir_calls = []
+    original_mkdir = Path.mkdir
+
+    def track_mkdir(
+        path,
+        *args,
+        **kwargs,
+    ):
+        mkdir_calls.append(
+            (path, args, kwargs)
+        )
+        return original_mkdir(
+            path,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        Path,
+        "mkdir",
+        track_mkdir,
+    )
+
+    generator.execute(plan)
+
+    assert expected_paths
+    assert [
+        path
+        for path, _, _ in mkdir_calls
+    ] == expected_paths
+    assert all(
+        args == () and kwargs == {}
+        for _, args, kwargs in mkdir_calls
+    )
+
+
+def test_execute_uses_planned_removal_kinds(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+    nested_path = output_path / "nested"
+    removed_file = nested_path / "removed.txt"
+
+    nested_path.mkdir(parents=True)
+    removed_file.write_text(
+        "remove",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    expected_unlinks = [
+        removal.path
+        for removal in plan.removals
+        if removal.kind in {
+            "file",
+            "symlink",
+        }
+    ]
+    expected_rmdirs = [
+        removal.path
+        for removal in plan.removals
+        if removal.kind == "directory"
+    ]
+
+    unlink_calls = []
+    rmdir_calls = []
+    original_unlink = Path.unlink
+    original_rmdir = Path.rmdir
+
+    def track_unlink(
+        path,
+        *args,
+        **kwargs,
+    ):
+        unlink_calls.append(path)
+        return original_unlink(
+            path,
+            *args,
+            **kwargs,
+        )
+
+    def track_rmdir(
+        path,
+        *args,
+        **kwargs,
+    ):
+        rmdir_calls.append(path)
+        return original_rmdir(
+            path,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        Path,
+        "unlink",
+        track_unlink,
+    )
+    monkeypatch.setattr(
+        Path,
+        "rmdir",
+        track_rmdir,
+    )
+
+    generator.execute(plan)
+
+    assert expected_unlinks
+    assert expected_rmdirs
+    assert unlink_calls == expected_unlinks
+    assert rmdir_calls == expected_rmdirs
+
 def test_project_generator_clean_plan_contains_exact_removals(
     registry,
     manifest,
@@ -1179,6 +1317,9 @@ def test_copy_strategy_replace_executes_removal(
     )
 
     generator = ProjectGenerator(registry)
+    initial_output_state = capture_output_state(
+        output_path
+    )
 
     files, removals = generator._plan_copy_source(
         module_key="example",
@@ -1195,14 +1336,21 @@ def test_copy_strategy_replace_executes_removal(
             "modules.example.sources.copy[0].from"
         ),
         clean=False,
+        initial_output_state=initial_output_state,
+    )
+
+    directories = generator._plan_directories(
+        output_path=output_path,
+        initial_output_state=initial_output_state,
+        removals=removals,
+        files=files,
     )
 
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
-        initial_output_state=capture_output_state(
-            output_path
-        ),
+        initial_output_state=initial_output_state,
+        directories=directories,
         files=files,
         removals=removals,
     )
@@ -1244,6 +1392,7 @@ def test_execute_rejects_unsafe_removal(
                 relative_path="../outside",
                 module="example",
                 reason="replace",
+                kind="directory",
             )
         ],
     )
@@ -1820,7 +1969,7 @@ def test_copy_source_wraps_directory_listing_error(
 
 def test_execute_wraps_clean_removal_error(
     registry,
-    resolved_project,
+    manifest,
     tmp_path,
     monkeypatch,
 ):
@@ -1833,41 +1982,55 @@ def test_execute_wraps_clean_removal_error(
         encoding="utf-8",
     )
 
-    original_rmtree = shutil.rmtree
-
-    def fail_clean(path, *args, **kwargs):
-        if Path(path) == output_path:
-            raise PermissionError(13, "Access denied")
-
-        return original_rmtree(path, *args, **kwargs)
-
-    monkeypatch.setattr(
-        shutil,
-        "rmtree",
-        fail_clean,
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
     )
 
-    plan = GenerationPlan(
-        resolved_project=resolved_project,
-        output_path=output_path,
-        initial_output_state=capture_output_state(
-            output_path
-        ),
-        clean_output=True,
+    original_unlink = Path.unlink
+
+    def fail_clean_removal(
+        path,
+        *args,
+        **kwargs,
+    ):
+        if path == protected_file:
+            raise PermissionError(
+                13,
+                "Access denied",
+            )
+
+        return original_unlink(
+            path,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        Path,
+        "unlink",
+        fail_clean_removal,
     )
 
     with pytest.raises(
         OutputDirectoryError
     ) as error_info:
-        ProjectGenerator(registry).execute(plan)
+        generator.execute(plan)
 
     error = error_info.value
 
-    assert isinstance(error.__cause__, PermissionError)
-    assert error.context["operation"] == "clean_output"
+    assert isinstance(
+        error.__cause__,
+        PermissionError,
+    )
+    assert error.context["operation"] == "remove_path"
+    assert error.context["path"] == str(
+        protected_file
+    )
     assert error.context["errno"] == 13
     assert protected_file.exists() is True
-
 
 def test_execute_wraps_output_directory_creation_error(
     registry,
@@ -1902,7 +2065,7 @@ def test_execute_wraps_output_directory_creation_error(
 
     assert isinstance(error.__cause__, PermissionError)
     assert error.context["operation"] == (
-        "create_output_directory"
+        "create_directory"
     )
     assert error.context["errno"] == 13
 
@@ -1939,6 +2102,13 @@ def test_execute_wraps_parent_directory_creation_error(
                 content=b"content",
             )
         ],
+        directories=[
+            PlannedDirectory(
+                path=nested_path,
+                relative_path="nested",
+                reason="parent",
+            )
+        ],
     )
 
     original_mkdir = Path.mkdir
@@ -1960,9 +2130,9 @@ def test_execute_wraps_parent_directory_creation_error(
     ) as error_info:
         ProjectGenerator(registry).execute(plan)
 
-    assert error_info.value.context["operation"] == (
-        "create_parent_directory"
-    )
+    assert error_info.value.context[
+        "operation"
+    ] == "create_directory"
     assert destination_path.exists() is False
 
 
@@ -2105,6 +2275,7 @@ def test_execute_wraps_planned_removal_error(
                 relative_path="remove.txt",
                 module="example",
                 reason="replace",
+                kind="file",
             )
         ],
     )
