@@ -1137,7 +1137,7 @@ class ProjectGenerator:
                 ),
             )
 
-        return str(relative_path)
+        return relative_path.as_posix()
 
     def _validate_removal_path(
         self,

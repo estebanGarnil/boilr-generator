@@ -2528,3 +2528,29 @@ def test_execute_rejects_stale_clean_plan_before_removal(
     assert capture_output_state(
         output_path
     ) == state_before_execute
+
+def test_project_generator_plan_uses_posix_relative_file_paths(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+
+    plan = ProjectGenerator(registry).plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    relative_paths = [
+        file.relative_destination_path
+        for file in plan.files
+    ]
+
+    assert any(
+        "/" in relative_path
+        for relative_path in relative_paths
+    )
+    assert all(
+        "\\" not in relative_path
+        for relative_path in relative_paths
+    )
