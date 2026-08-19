@@ -19,6 +19,7 @@ from boilr_generator.exceptions import (
     OutputDirectoryError,
     SourceNotFoundError,
     SourceReadError,
+    StaleGenerationPlanError,
     UnsafePathError,
 )
 from boilr_generator.generation.context import (
@@ -29,6 +30,7 @@ from boilr_generator.generation.env import EnvGenerator
 from boilr_generator.generation.files import FileGenerator
 from boilr_generator.generation.filesystem import (
     capture_output_state,
+    find_changed_output_paths,
 )
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
@@ -493,9 +495,10 @@ class ProjectGenerator:
         plan: GenerationPlan,
     ) -> None:
         """Apply a complete plan without recalculating outputs."""
-        self._validate_file_conflicts(plan.files)
-
         output_path = plan.output_path
+        self._validate_initial_output_state(plan)
+
+        self._validate_file_conflicts(plan.files)
 
         if plan.clean_output:
             self._validate_clean_output_path(output_path)
@@ -542,6 +545,68 @@ class ProjectGenerator:
                 continue
 
             self._write_planned_file(planned_file)
+
+    @staticmethod
+    def _validate_initial_output_state(
+        plan: GenerationPlan,
+    ) -> None:
+        """Reject a plan whose initial state is missing or stale."""
+        if not plan.initial_output_state:
+            raise StaleGenerationPlanError(
+                (
+                    "Cannot execute a generation plan without "
+                    "a captured initial output state."
+                ),
+                field_path=(
+                    "generation.initial_output_state"
+                ),
+                context={
+                    "reason": (
+                        "missing_initial_output_state"
+                    ),
+                    "output_path": str(
+                        plan.output_path
+                    ),
+                },
+                suggestion=(
+                    "Create a new plan immediately before "
+                    "executing it."
+                ),
+            )
+
+        actual_output_state = capture_output_state(
+            plan.output_path
+        )
+        changed_paths = find_changed_output_paths(
+            plan.initial_output_state,
+            actual_output_state,
+        )
+
+        if not changed_paths:
+            return
+
+        raise StaleGenerationPlanError(
+            (
+                "Cannot execute the generation plan because "
+                "the output filesystem changed after planning."
+            ),
+            field_path="generation.initial_output_state",
+            context={
+                "reason": "output_state_changed",
+                "output_path": str(plan.output_path),
+                "changed_paths": changed_paths,
+                "expected_paths_count": len(
+                    plan.initial_output_state
+                ),
+                "actual_paths_count": len(
+                    actual_output_state
+                ),
+            },
+            suggestion=(
+                "Create a new plan from the current output "
+                "state before executing it."
+            ),
+        )
 
     def _remove_clean_output(
         self,

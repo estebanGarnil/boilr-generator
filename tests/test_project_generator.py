@@ -14,9 +14,13 @@ from boilr_generator.exceptions import (
     OutputDirectoryError,
     SourceNotFoundError,
     SourceReadError,
+    StaleGenerationPlanError,
     UnsafePathError,
 )
 from boilr_generator.generation import ProjectGenerator
+from boilr_generator.generation.filesystem import (
+    capture_output_state,
+)
 from boilr_generator.modules.schemas import (
     CopySource,
     RenderSource,
@@ -1196,6 +1200,9 @@ def test_copy_strategy_replace_executes_removal(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         files=files,
         removals=removals,
     )
@@ -1228,6 +1235,9 @@ def test_execute_rejects_unsafe_removal(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         removals=[
             PlannedRemoval(
                 path=outside_path,
@@ -1416,6 +1426,9 @@ def test_execute_rejects_unsafe_file_destination(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         files=[
             PlannedFile(
                 source_path=None,
@@ -1683,6 +1696,9 @@ def test_execute_revalidates_clean_output_directory(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=protected_path,
+        initial_output_state=capture_output_state(
+            protected_path
+        ),
         clean_output=True,
     )
 
@@ -1834,6 +1850,9 @@ def test_execute_wraps_clean_removal_error(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         clean_output=True,
     )
 
@@ -1905,6 +1924,9 @@ def test_execute_wraps_parent_directory_creation_error(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         files=[
             PlannedFile(
                 source_path=None,
@@ -1958,6 +1980,9 @@ def test_execute_wraps_file_write_error(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         files=[
             PlannedFile(
                 source_path=None,
@@ -2011,6 +2036,9 @@ def test_execute_wraps_file_mode_error(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         files=[
             PlannedFile(
                 source_path=None,
@@ -2068,6 +2096,9 @@ def test_execute_wraps_planned_removal_error(
     plan = GenerationPlan(
         resolved_project=resolved_project,
         output_path=output_path,
+        initial_output_state=capture_output_state(
+            output_path
+        ),
         removals=[
             PlannedRemoval(
                 path=removal_path,
@@ -2208,3 +2239,121 @@ def test_project_generator_plan_rejects_directory_path_conflict(
     assert error.context["existing_kind"] == "file"
     assert blocking_file.exists() is True
     assert snapshot_filesystem(output_path) == before
+
+def test_execute_rejects_missing_initial_output_state(
+    registry,
+    resolved_project,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=output_path,
+    )
+    state_before_execute = capture_output_state(
+        output_path
+    )
+
+    with pytest.raises(
+        StaleGenerationPlanError
+    ) as error_info:
+        ProjectGenerator(registry).execute(plan)
+
+    error = error_info.value
+
+    assert error.code == "stale_generation_plan"
+    assert error.context["reason"] == (
+        "missing_initial_output_state"
+    )
+    assert capture_output_state(
+        output_path
+    ) == state_before_execute
+
+
+def test_execute_rejects_changed_output_state_before_mutation(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    preserved_path = output_path / "preserved.txt"
+    preserved_path.write_text(
+        "before",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+    )
+
+    preserved_path.write_text(
+        "after",
+        encoding="utf-8",
+    )
+    state_before_execute = capture_output_state(
+        output_path
+    )
+
+    with pytest.raises(
+        StaleGenerationPlanError
+    ) as error_info:
+        generator.execute(plan)
+
+    error = error_info.value
+
+    assert error.context["reason"] == (
+        "output_state_changed"
+    )
+    assert error.context["changed_paths"] == [
+        "preserved.txt"
+    ]
+    assert capture_output_state(
+        output_path
+    ) == state_before_execute
+
+
+def test_execute_rejects_stale_clean_plan_before_removal(
+    registry,
+    manifest,
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    existing_path = output_path / "existing.txt"
+    existing_path.write_text(
+        "existing",
+        encoding="utf-8",
+    )
+
+    generator = ProjectGenerator(registry)
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=output_path,
+        clean=True,
+    )
+
+    late_path = output_path / "late.txt"
+    late_path.write_text(
+        "late",
+        encoding="utf-8",
+    )
+    state_before_execute = capture_output_state(
+        output_path
+    )
+
+    with pytest.raises(
+        StaleGenerationPlanError
+    ) as error_info:
+        generator.execute(plan)
+
+    assert error_info.value.context[
+        "changed_paths"
+    ] == ["late.txt"]
+    assert capture_output_state(
+        output_path
+    ) == state_before_execute

@@ -145,3 +145,31 @@ def capture_output_state(
     )
 
     return states
+
+def find_changed_output_paths(
+    expected_state: list[PlannedPathState],
+    actual_state: list[PlannedPathState],
+) -> list[str]:
+    """Return paths whose captured state differs."""
+    expected_by_path = {
+        state.relative_path: state
+        for state in expected_state
+    }
+    actual_by_path = {
+        state.relative_path: state
+        for state in actual_state
+    }
+
+    all_relative_paths = (
+        set(expected_by_path)
+        | set(actual_by_path)
+    )
+
+    return [
+        relative_path
+        for relative_path in sorted(
+            all_relative_paths
+        )
+        if expected_by_path.get(relative_path)
+        != actual_by_path.get(relative_path)
+    ]

@@ -5,6 +5,7 @@ import pytest
 from boilr_generator.generation.filesystem import (
     capture_output_state,
     capture_path_state,
+    find_changed_output_paths,
 )
 
 
@@ -161,3 +162,79 @@ def test_capture_output_state_does_not_follow_symbolic_links(
     assert outside_file.read_text(
         encoding="utf-8"
     ) == "protected"
+
+def test_find_changed_output_paths_returns_empty_for_same_state(
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+    (output_path / "file.txt").write_text(
+        "content",
+        encoding="utf-8",
+    )
+
+    expected_state = capture_output_state(
+        output_path
+    )
+    actual_state = capture_output_state(
+        output_path
+    )
+
+    assert find_changed_output_paths(
+        expected_state,
+        actual_state,
+    ) == []
+
+
+def test_find_changed_output_paths_reports_all_changes(
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    changed_path = output_path / "changed.txt"
+    removed_path = output_path / "removed.txt"
+    type_path = output_path / "type-change"
+
+    changed_path.write_text(
+        "before",
+        encoding="utf-8",
+    )
+    removed_path.write_text(
+        "removed",
+        encoding="utf-8",
+    )
+    type_path.write_text(
+        "file",
+        encoding="utf-8",
+    )
+
+    expected_state = capture_output_state(
+        output_path
+    )
+
+    changed_path.write_text(
+        "after",
+        encoding="utf-8",
+    )
+    removed_path.unlink()
+    type_path.unlink()
+    type_path.mkdir()
+    (output_path / "added.txt").write_text(
+        "added",
+        encoding="utf-8",
+    )
+
+    actual_state = capture_output_state(
+        output_path
+    )
+
+    assert find_changed_output_paths(
+        expected_state,
+        actual_state,
+    ) == [
+        "added.txt",
+        "changed.txt",
+        "removed.txt",
+        "type-change",
+    ]
