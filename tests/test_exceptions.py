@@ -71,6 +71,64 @@ def test_boilr_error_contains_structured_context():
     }
     assert error.suggestion == 'Select a module of type "database".'
 
+def test_boilr_error_serializes_complete_contract():
+    error = ProviderSelectionError(
+        "No provider matches the requested criteria.",
+        module_key="django",
+        field_path="modules.django.bindings.database",
+        context={
+            "reason": "no_matching_provider",
+            "candidates": ["postgres"],
+        },
+        suggestion="Change the provider selection criteria.",
+    )
+
+    assert error.to_dict() == {
+        "code": "provider_selection_error",
+        "message": (
+            "No provider matches the requested criteria."
+        ),
+        "module_key": "django",
+        "field_path": (
+            "modules.django.bindings.database"
+        ),
+        "context": {
+            "reason": "no_matching_provider",
+            "candidates": ["postgres"],
+        },
+        "suggestion": (
+            "Change the provider selection criteria."
+        ),
+    }
+
+
+def test_boilr_error_serialization_preserves_empty_fields():
+    error = BoilrError("Unexpected Boilr error.")
+
+    assert error.to_dict() == {
+        "code": "boilr_error",
+        "message": "Unexpected Boilr error.",
+        "module_key": None,
+        "field_path": None,
+        "context": {},
+        "suggestion": None,
+    }
+
+
+def test_boilr_error_serialization_copies_context():
+    error = BoilrError(
+        "Unexpected Boilr error.",
+        context={
+            "reason": "unexpected",
+        },
+    )
+
+    serialized = error.to_dict()
+    serialized["context"]["additional"] = True
+
+    assert error.context == {
+        "reason": "unexpected",
+    }
 
 def test_error_context_is_not_shared_between_instances():
     first_error = BoilrError("First error")

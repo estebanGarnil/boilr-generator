@@ -26,6 +26,16 @@ class BoilrError(Exception):
         self.context = dict(context or {})
         self.suggestion = suggestion
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return the complete structured error contract."""
+        return {
+            "code": self.code,
+            "message": self.message,
+            "module_key": self.module_key,
+            "field_path": self.field_path,
+            "context": dict(self.context),
+            "suggestion": self.suggestion,
+        }
 
 # ---------------------------------------------------------------------------
 # Configuration
