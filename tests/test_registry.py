@@ -1,5 +1,9 @@
 import pytest
-from boilr_generator.core.exceptions import ModuleNotFoundError
+from boilr_generator.exceptions import (
+    DuplicateModuleError,
+    ModuleNotFoundError,
+)
+from boilr_generator.modules.registry import ModuleRegistry
 
 
 def test_registry_loads_available_modules(registry):
@@ -35,6 +39,83 @@ def test_registry_lists_modules_by_type(registry):
     assert any(module.meta.key == "postgres" for module in database_modules)
 
 
-def test_registry_raises_for_unknown_module(registry):
-    with pytest.raises(ModuleNotFoundError):
-        registry.get("unknown")
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "get",
+        "get_path",
+    ],
+)
+def test_registry_reports_unknown_module(
+    registry,
+    method_name,
+):
+    with pytest.raises(
+        ModuleNotFoundError
+    ) as error_info:
+        getattr(registry, method_name)("unknown")
+
+    error = error_info.value
+
+    assert error.code == "module_not_found"
+    assert error.module_key == "unknown"
+    assert error.field_path == "modules.unknown"
+    assert error.context == {
+        "requested_module": "unknown",
+        "available_modules": sorted(
+            registry.list_keys()
+        ),
+    }
+    assert error.suggestion is not None
+
+def test_registry_reports_duplicate_module_paths(
+    registry,
+    tmp_path,
+    monkeypatch,
+):
+    first_module_file = (
+        tmp_path / "first" / "module.yml"
+    )
+    duplicate_module_file = (
+        tmp_path / "second" / "module.yml"
+    )
+
+    for module_file in (
+        first_module_file,
+        duplicate_module_file,
+    ):
+        module_file.parent.mkdir()
+        module_file.write_text(
+            "",
+            encoding="utf-8",
+        )
+
+    module_manifest = registry.get("django")
+
+    monkeypatch.setattr(
+        (
+            "boilr_generator.modules.registry."
+            "load_module_from_yaml"
+        ),
+        lambda _: module_manifest,
+    )
+
+    with pytest.raises(
+        DuplicateModuleError
+    ) as error_info:
+        ModuleRegistry(tmp_path)
+
+    error = error_info.value
+
+    assert error.code == "duplicate_module"
+    assert error.module_key == "django"
+    assert error.field_path == "meta.key"
+    assert error.context["module_key"] == "django"
+    assert {
+        error.context["first_module_path"],
+        error.context["duplicate_module_path"],
+    } == {
+        str(first_module_file),
+        str(duplicate_module_file),
+    }
+    assert error.suggestion is not None
