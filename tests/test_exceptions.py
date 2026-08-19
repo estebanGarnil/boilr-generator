@@ -21,6 +21,7 @@ from boilr_generator.exceptions import (
     UnknownOptionError,
     UnknownVariableError,
     UnsafePathError,
+    UnsupportedFilesystemEntryError,
 )
 
 
@@ -40,6 +41,7 @@ from boilr_generator.exceptions import (
         UnknownOptionError,
         UnknownVariableError,
         UnsafePathError,
+        UnsupportedFilesystemEntryError,
         SourceReadError,
         InvalidEnvironmentVariableError,
         ProviderSelectionError,

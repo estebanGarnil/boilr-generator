@@ -7,6 +7,9 @@ from pathlib import Path
 from boilr_generator.core.generation_plan import (
     PlannedPathState,
 )
+from boilr_generator.exceptions import (
+    UnsupportedFilesystemEntryError,
+)
 
 _HASH_CHUNK_SIZE = 1024 * 1024
 
@@ -89,8 +92,19 @@ def capture_path_state(
             mode=mode,
         )
 
-    raise ValueError(
-        f"Unsupported filesystem path type: '{path}'."
+    raise UnsupportedFilesystemEntryError(
+        f"Unsupported filesystem path type: '{path}'.",
+        field_path="generation.output_path",
+        context={
+            "path": str(path),
+            "relative_path": relative_path,
+            "st_mode": path_stat.st_mode,
+        },
+        suggestion=(
+            "Remove the unsupported filesystem entry or "
+            "replace it with a regular file, directory, "
+            "or symbolic link."
+        ),
     )
 
 

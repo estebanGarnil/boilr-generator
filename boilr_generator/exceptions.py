@@ -260,6 +260,11 @@ class UnsafePathError(GenerationError):
 
     code = "unsafe_path"
 
+class UnsupportedFilesystemEntryError(GenerationError):
+    """Raised for an unsupported output filesystem entry."""
+
+    code = "unsupported_filesystem_entry"
+
 class FileConflictError(GenerationError):
     """Raised when multiple operations conflict over the same file."""
 
@@ -352,6 +357,7 @@ __all__ = [
     "SourceReadError",
     "StaleGenerationPlanError",
     "UnsafePathError",
+    "UnsupportedFilesystemEntryError",
     "TemplateRenderError",
     "UnknownExtensionPointError",
     "UnknownOptionError",
