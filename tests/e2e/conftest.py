@@ -23,6 +23,7 @@ class DockerComposeRunner:
         self,
         *arguments: str,
         timeout: int = 900,
+        require_success: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         """Run one Docker Compose command and require success."""
         command = [
@@ -56,15 +57,40 @@ class DockerComposeRunner:
                 pytrace=False,
             )
 
-        assert result.returncode == 0, (
-            "Docker Compose command failed.\n"
-            f"Command: {' '.join(command)}\n"
-            f"Exit code: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
+        if require_success:
+            assert result.returncode == 0, (
+                "Docker Compose command failed.\n"
+                f"Command: {' '.join(command)}\n"
+                f"Exit code: {result.returncode}\n"
+                f"stdout:\n{result.stdout}\n"
+                f"stderr:\n{result.stderr}"
+            )
 
         return result
+
+    def diagnostics(self) -> str:
+        """Return service state and logs for a failed stack."""
+        status = self.run(
+            "ps",
+            "--all",
+            timeout=30,
+            require_success=False,
+        )
+        logs = self.run(
+            "logs",
+            "--no-color",
+            timeout=60,
+            require_success=False,
+        )
+
+        return (
+            "Docker Compose status:\n"
+            f"{status.stdout}\n"
+            f"{status.stderr}\n"
+            "Docker Compose logs:\n"
+            f"{logs.stdout}\n"
+            f"{logs.stderr}"
+        )
 
     def cleanup(self) -> None:
         """Remove resources created for this Compose project."""
