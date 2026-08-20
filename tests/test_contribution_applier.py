@@ -163,13 +163,20 @@ def test_applier_rejects_conflicting_replace_values():
 
     assert error.code == "contribution_conflict"
     assert error.module_key == "module_b"
-    assert error.context["merge_strategy"] == "replace"
-    assert error.context["first_contributor"] == (
-        "module_a"
+    assert error.field_path == (
+        "modules.django.extension_points.example.point"
     )
-    assert error.context["conflicting_contributor"] == (
-        "module_b"
-    )
+    assert error.context == {
+        "target_module": "django",
+        "extension_point": "example.point",
+        "merge_strategy": "replace",
+        "value_path": "example.point",
+        "first_contributor": "module_a",
+        "conflicting_contributor": "module_b",
+        "existing_value": "first",
+        "conflicting_value": "second",
+    }
+    assert error.suggestion is not None
 
 
 def test_applier_deep_merges_non_conflicting_values():
@@ -251,16 +258,21 @@ def test_applier_rejects_deep_merge_conflicts():
     error = error_info.value
 
     assert error.code == "contribution_conflict"
-    assert error.context["merge_strategy"] == "deep_merge"
-    assert error.context["value_path"] == (
-        "example.point.pool.size"
+    assert error.module_key == "module_b"
+    assert error.field_path == (
+        "modules.django.extension_points.example.point"
     )
-    assert error.context["first_contributor"] == (
-        "module_a"
-    )
-    assert error.context["conflicting_contributor"] == (
-        "module_b"
-    )
+    assert error.context == {
+        "target_module": "django",
+        "extension_point": "example.point",
+        "merge_strategy": "deep_merge",
+        "value_path": "example.point.pool.size",
+        "first_contributor": "module_a",
+        "conflicting_contributor": "module_b",
+        "existing_value": 5,
+        "conflicting_value": 10,
+    }
+    assert error.suggestion is not None
 
 def test_applier_rejects_missing_required_contribution():
     extension_point = make_extension_point(

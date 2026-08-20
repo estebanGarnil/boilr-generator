@@ -151,11 +151,19 @@ def test_binder_rejects_ambiguous_unique_provider():
 
     assert error.code == "ambiguous_provider"
     assert error.module_key == "django"
-    assert error.context["candidate_count"] == 2
-    assert error.context["candidate_modules"] == [
-        "postgres",
-        "mysql",
-    ]
+    assert error.field_path == (
+        "modules.django.requires.primary_database"
+    )
+    assert error.context == {
+        "capability": "database.connection",
+        "binding_key": "primary_database",
+        "candidate_modules": [
+            "postgres",
+            "mysql",
+        ],
+        "candidate_count": 2,
+    }
+    assert error.suggestion is not None
 
 
 def test_binder_accepts_multiple_providers_when_not_unique():
