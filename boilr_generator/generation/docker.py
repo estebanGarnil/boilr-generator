@@ -163,15 +163,38 @@ class DockerComposeGenerator:
             ]
 
         if isinstance(value, dict):
-            return {
-                key: self._render_value(
-                    item,
-                    context,
-                    module_key=module_key,
-                    field_path=f"{field_path}.{key}",
+            rendered_mapping: dict[
+                Any,
+                Any,
+            ] = {}
+
+            for key, item in value.items():
+                key_field_path = (
+                    f"{field_path}.{key}"
                 )
-                for key, item in value.items()
-            }
+                rendered_key = (
+                    self._render_string(
+                        key,
+                        context,
+                        module_key=module_key,
+                        field_path=(
+                            f"{key_field_path}.__key__"
+                        ),
+                    )
+                    if isinstance(key, str)
+                    else key
+                )
+
+                rendered_mapping[rendered_key] = (
+                    self._render_value(
+                        item,
+                        context,
+                        module_key=module_key,
+                        field_path=key_field_path,
+                    )
+                )
+
+            return rendered_mapping
 
         return value
 

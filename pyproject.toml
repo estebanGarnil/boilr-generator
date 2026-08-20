@@ -44,6 +44,9 @@ namespaces = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "docker_e2e: requires Docker and runs generated Docker stacks.",
+]
 
 [tool.setuptools.package-data]
 boilr_generator = [
