@@ -123,6 +123,13 @@ def render_boilr_error(error: BoilrError) -> None:
     )
 
 
+def render_boilr_error_json(error: BoilrError) -> None:
+    """Render one expected Boilr error as JSON."""
+    console.print_json(
+        data=error.to_dict(),
+    )
+
+
 def render_plan_overview(
     plan_dict: dict,
     title: str,
@@ -477,9 +484,12 @@ def dry_run(
         if debug:
             raise
 
-        render_boilr_error(error)
-        raise typer.Exit(code=1) from None
+        if json_output:
+            render_boilr_error_json(error)
+        else:
+            render_boilr_error(error)
 
+        raise typer.Exit(code=1) from None
 
 @app.command()
 def generate(

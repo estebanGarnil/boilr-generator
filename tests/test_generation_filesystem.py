@@ -1,13 +1,48 @@
+import os
+import stat
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from boilr_generator.exceptions import (
+    UnsupportedFilesystemEntryError,
+)
 from boilr_generator.generation.filesystem import (
     capture_output_state,
     capture_path_state,
     find_changed_output_paths,
 )
 
+
+@pytest.mark.skipif(
+    not hasattr(os, "mkfifo"),
+    reason=(
+        "FIFO creation is not supported on this platform."
+    ),
+)
+def test_capture_output_state_reports_unsupported_entry(
+    tmp_path,
+):
+    output_path = tmp_path / "output"
+    output_path.mkdir()
+
+    fifo_path = output_path / "events.pipe"
+    os.mkfifo(fifo_path)
+
+    with pytest.raises(
+        UnsupportedFilesystemEntryError
+    ) as error_info:
+        capture_output_state(output_path)
+
+    error = error_info.value
+
+    assert error.code == "unsupported_filesystem_entry"
+    assert error.module_key is None
+    assert error.field_path == "generation.output_path"
+    assert error.context["path"] == str(fifo_path)
+    assert error.context["relative_path"] == "events.pipe"
+    assert stat.S_ISFIFO(error.context["st_mode"])
+    assert error.suggestion is not None
 
 def test_capture_output_state_reports_missing_output(
     tmp_path,
