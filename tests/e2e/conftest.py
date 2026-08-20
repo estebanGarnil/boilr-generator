@@ -1,8 +1,81 @@
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
+
+
+class DockerComposeRunner:
+    """Run Docker Compose for one isolated generated project."""
+
+    def __init__(
+        self,
+        project_path: Path,
+    ) -> None:
+        self.project_path = project_path
+        self.project_name = (
+            f"boilr-e2e-{uuid4().hex[:12]}"
+        )
+
+    def run(
+        self,
+        *arguments: str,
+        timeout: int = 900,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run one Docker Compose command and require success."""
+        command = [
+            "docker",
+            "compose",
+            "--project-name",
+            self.project_name,
+            *arguments,
+        ]
+
+        try:
+            result = subprocess.run(
+                command,
+                cwd=self.project_path,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=timeout,
+            )
+        except FileNotFoundError:
+            pytest.fail(
+                "Docker CLI is not installed or is not "
+                "available in PATH.",
+                pytrace=False,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(
+                "Docker Compose command timed out after "
+                f"{timeout} seconds: {' '.join(command)}",
+                pytrace=False,
+            )
+
+        assert result.returncode == 0, (
+            "Docker Compose command failed.\n"
+            f"Command: {' '.join(command)}\n"
+            f"Exit code: {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+
+        return result
+
+    def cleanup(self) -> None:
+        """Remove resources created for this Compose project."""
+        self.run(
+            "down",
+            "--volumes",
+            "--remove-orphans",
+            "--rmi",
+            "local",
+            timeout=120,
+        )
 
 
 @pytest.fixture
@@ -30,7 +103,8 @@ def generated_e2e_project(
             "--clean",
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
@@ -41,3 +115,23 @@ def generated_e2e_project(
     )
 
     return output_path
+
+
+@pytest.fixture
+def docker_compose_project(
+    generated_e2e_project: Path,
+) -> Iterator[DockerComposeRunner]:
+    """Provide an isolated Compose project and clean it afterward."""
+    runner = DockerComposeRunner(
+        generated_e2e_project
+    )
+
+    runner.run(
+        "version",
+        timeout=30,
+    )
+
+    try:
+        yield runner
+    finally:
+        runner.cleanup()
