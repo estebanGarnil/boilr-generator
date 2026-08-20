@@ -188,3 +188,42 @@ def test_docker_generator_omits_obsolete_version(
     )
 
     assert "version" not in compose
+
+def test_docker_generator_adds_postgres_healthcheck(
+    resolved_project,
+):
+    compose = DockerComposeGenerator().generate(
+        resolved_project
+    )
+
+    assert compose["services"]["db"][
+        "healthcheck"
+    ] == {
+        "test": [
+            "CMD-SHELL",
+            (
+                'pg_isready -U "$${POSTGRES_USER}" '
+                '-d "$${POSTGRES_DB}"'
+            ),
+        ],
+        "interval": "2s",
+        "timeout": "5s",
+        "retries": 15,
+        "start_period": "5s",
+    }
+
+
+def test_docker_generator_waits_for_database_health(
+    resolved_project,
+):
+    compose = DockerComposeGenerator().generate(
+        resolved_project
+    )
+
+    assert compose["services"]["backend"][
+        "depends_on"
+    ] == {
+        "db": {
+            "condition": "service_healthy",
+        },
+    }

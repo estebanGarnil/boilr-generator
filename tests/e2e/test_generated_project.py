@@ -52,7 +52,11 @@ def test_cli_generates_docker_e2e_inputs(
         "context": "./backend",
         "dockerfile": "Dockerfile",
     }
-    assert backend["depends_on"] == ["db"]
+    assert backend["depends_on"] == {
+        "db": {
+            "condition": "service_healthy",
+        },
+    }
     assert backend["ports"] == ["8000:8000"]
     assert "python manage.py migrate" in backend["command"]
     assert (
@@ -64,7 +68,19 @@ def test_cli_generates_docker_e2e_inputs(
     database = services["db"]
 
     assert database["image"] == "postgres:16"
-    assert database["ports"] == ["5432:5432"]
+    assert database["healthcheck"] == {
+        "test": [
+            "CMD-SHELL",
+            (
+                'pg_isready -U "$${POSTGRES_USER}" '
+                '-d "$${POSTGRES_DB}"'
+            ),
+        ],
+        "interval": "2s",
+        "timeout": "5s",
+        "retries": 15,
+        "start_period": "5s",
+    }
     assert database["environment"] == {
         "POSTGRES_DB": "docker_e2e",
         "POSTGRES_USER": "docker_e2e",
