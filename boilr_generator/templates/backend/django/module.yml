@@ -151,7 +151,8 @@ docker:
         - "{{ backend_port }}:8000"
 
       depends_on:
-        - "{{ bindings.primary_database.service }}"
+        "{{ bindings.primary_database.service }}":
+          condition: service_healthy
 
       env_file:
         - .env

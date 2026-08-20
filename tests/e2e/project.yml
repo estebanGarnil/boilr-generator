@@ -1,0 +1,28 @@
+project:
+  name: docker_e2e
+  type: fullstack_web
+  version: 1.0.0
+
+modules:
+  - key: postgres
+    variables:
+      db_name: docker_e2e
+      db_user: docker_e2e
+      db_password: docker-e2e-password
+      db_port: 5432
+
+  - key: django
+    variables:
+      project_name: docker_e2e
+      django_settings_module: config.settings.local
+      backend_port: 8000
+      secret_key: docker-e2e-secret-key
+      debug: true
+      allowed_hosts:
+        - localhost
+        - 127.0.0.1
+    options:
+      rest_framework: true
+      cors: true
+
+  - key: django-postgres
