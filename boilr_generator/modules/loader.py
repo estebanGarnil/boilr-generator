@@ -24,6 +24,7 @@ def load_module_from_dict(
             field_path=details[0]["path"] if details else None,
             context={"errors": details},
             suggestion="Check the structure and values of the module manifest.",
+            module_key=_extract_module_key(data),
         ) from error
 
 
@@ -42,6 +43,7 @@ def _read_yaml_file(path: str | Path) -> dict[str, Any]:
             f"Module file not found: {module_path}",
             context={"path": str(module_path)},
             suggestion="Check that the module.yml path is correct.",
+            field_path="module_path",
         )
 
     if not module_path.is_file():
@@ -49,6 +51,7 @@ def _read_yaml_file(path: str | Path) -> dict[str, Any]:
             f"Module path is not a file: {module_path}",
             context={"path": str(module_path)},
             suggestion="Provide the path to a module.yml file.",
+            field_path="module_path",
         )
 
     try:
@@ -69,12 +72,14 @@ def _read_yaml_file(path: str | Path) -> dict[str, Any]:
             f"Invalid YAML in module file: {module_path}",
             context=context,
             suggestion="Check the YAML syntax near the indicated position.",
+            field_path="module_path",
         ) from error
     except (OSError, UnicodeError) as error:
         raise ModuleLoadError(
             f"Unable to read module file: {module_path}",
             context={"path": str(module_path)},
             suggestion="Check the file permissions and encoding.",
+            field_path="module_path",
         ) from error
 
     if data is None:
@@ -82,6 +87,7 @@ def _read_yaml_file(path: str | Path) -> dict[str, Any]:
             f"Module file is empty: {module_path}",
             context={"path": str(module_path)},
             suggestion="Add a valid module definition.",
+            field_path="<root>",
         )
 
     if not isinstance(data, dict):
@@ -97,6 +103,21 @@ def _read_yaml_file(path: str | Path) -> dict[str, Any]:
 
     return data
 
+def _extract_module_key(
+    data: dict[str, Any],
+) -> str | None:
+    """Extract a usable module key from invalid input."""
+    meta = data.get("meta")
+
+    if not isinstance(meta, dict):
+        return None
+
+    key = meta.get("key")
+
+    if not isinstance(key, str) or not key:
+        return None
+
+    return key
 
 def _serialize_validation_errors(
     error: ValidationError,

@@ -44,6 +44,7 @@ def _read_yaml_file(path: str | Path) -> dict[str, Any]:
             f"Manifest file not found: {manifest_path}",
             context={"path": str(manifest_path)},
             suggestion="Check that the manifest path is correct.",
+            field_path="manifest_path",
         )
 
     if not manifest_path.is_file():
@@ -51,6 +52,7 @@ def _read_yaml_file(path: str | Path) -> dict[str, Any]:
             f"Manifest path is not a file: {manifest_path}",
             context={"path": str(manifest_path)},
             suggestion="Provide the path to a YAML manifest file.",
+            field_path="manifest_path",
         )
 
     try:
@@ -71,12 +73,14 @@ def _read_yaml_file(path: str | Path) -> dict[str, Any]:
             f"Invalid YAML in manifest file: {manifest_path}",
             context=context,
             suggestion="Check the YAML syntax near the indicated position.",
+            field_path="manifest_path",
         ) from error
     except (OSError, UnicodeError) as error:
         raise ManifestLoadError(
             f"Unable to read manifest file: {manifest_path}",
             context={"path": str(manifest_path)},
             suggestion="Check the file permissions and encoding.",
+            field_path="manifest_path",
         ) from error
 
     if data is None:
@@ -84,6 +88,7 @@ def _read_yaml_file(path: str | Path) -> dict[str, Any]:
             f"Manifest file is empty: {manifest_path}",
             context={"path": str(manifest_path)},
             suggestion="Add the project and modules sections to the manifest.",
+            field_path="<root>",
         )
 
     if not isinstance(data, dict):

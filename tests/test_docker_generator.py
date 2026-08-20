@@ -83,10 +83,42 @@ def test_docker_generator_rejects_conflicting_services(
     assert error.code == "docker_conflict"
     assert error.module_key == "django"
     assert error.field_path == "modules.django.docker.services.db"
-    assert error.context["service"] == "db"
-    assert error.context["first_module"] == "postgres"
-    assert error.context["conflicting_module"] == "django"
+    assert error.context == {
+        "service": "db",
+        "first_module": "postgres",
+        "conflicting_module": "django",
+    }
+    assert error.suggestion is not None
 
+def test_docker_generator_rejects_conflicting_volumes(
+    resolved_project,
+):
+    project = resolved_project.model_copy(deep=True)
+    django = project.get_module("django")
+
+    assert django is not None
+    assert django.manifest.docker is not None
+
+    django.manifest.docker.volumes["postgres_data"] = {
+        "driver": "local",
+    }
+
+    with pytest.raises(DockerConflictError) as error_info:
+        DockerComposeGenerator().generate(project)
+
+    error = error_info.value
+
+    assert error.code == "docker_conflict"
+    assert error.module_key == "django"
+    assert error.field_path == (
+        "modules.django.docker.volumes.postgres_data"
+    )
+    assert error.context == {
+        "volume": "postgres_data",
+        "first_module": "postgres",
+        "conflicting_module": "django",
+    }
+    assert error.suggestion is not None
 
 def test_docker_generator_reports_template_render_errors(
     resolved_project,

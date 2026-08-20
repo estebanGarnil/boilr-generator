@@ -2400,14 +2400,17 @@ def test_project_generator_plan_rejects_directory_path_conflict(
     error = error_info.value
 
     assert error.code == "file_conflict"
+    assert error.module_key == "django"
     assert error.field_path == (
         "generation.directories[backend]"
     )
-    assert error.context["reason"] == (
-        "directory_path_conflict"
-    )
-    assert error.context["relative_path"] == "backend"
-    assert error.context["existing_kind"] == "file"
+    assert error.context == {
+        "reason": "directory_path_conflict",
+        "path": str(blocking_file),
+        "relative_path": "backend",
+        "existing_kind": "file",
+    }
+    assert error.suggestion is not None
     assert blocking_file.exists() is True
     assert snapshot_filesystem(output_path) == before
 
@@ -2433,9 +2436,15 @@ def test_execute_rejects_missing_initial_output_state(
     error = error_info.value
 
     assert error.code == "stale_generation_plan"
-    assert error.context["reason"] == (
-        "missing_initial_output_state"
+    assert error.module_key is None
+    assert error.field_path == (
+        "generation.initial_output_state"
     )
+    assert error.context == {
+        "reason": "missing_initial_output_state",
+        "output_path": str(output_path),
+    }
+    assert error.suggestion is not None
     assert capture_output_state(
         output_path
     ) == state_before_execute
@@ -2476,12 +2485,21 @@ def test_execute_rejects_changed_output_state_before_mutation(
 
     error = error_info.value
 
-    assert error.context["reason"] == (
-        "output_state_changed"
+    assert error.code == "stale_generation_plan"
+    assert error.module_key is None
+    assert error.field_path == (
+        "generation.initial_output_state"
     )
-    assert error.context["changed_paths"] == [
-        "preserved.txt"
-    ]
+    assert error.context == {
+        "reason": "output_state_changed",
+        "output_path": str(output_path),
+        "changed_paths": [
+            "preserved.txt",
+        ],
+        "expected_paths_count": 2,
+        "actual_paths_count": 2,
+    }
+    assert error.suggestion is not None
     assert capture_output_state(
         output_path
     ) == state_before_execute

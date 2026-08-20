@@ -58,9 +58,12 @@ def test_env_generator_rejects_conflicting_exports(
     assert error.code == "environment_conflict"
     assert error.module_key == "django"
     assert error.field_path == "modules.django.exports.env.DB_HOST"
-    assert error.context["variable"] == "DB_HOST"
-    assert error.context["first_module"] == "postgres"
-    assert error.context["conflicting_module"] == "django"
+    assert error.context == {
+        "variable": "DB_HOST",
+        "first_module": "postgres",
+        "conflicting_module": "django",
+    }
+    assert error.suggestion is not None
 
 
 def test_env_generator_reports_template_render_errors(

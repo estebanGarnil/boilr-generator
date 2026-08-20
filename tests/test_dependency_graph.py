@@ -172,16 +172,20 @@ def test_graph_rejects_dependency_cycles(
     error = error_info.value
 
     assert error.code == "dependency_cycle"
+    assert error.module_key == "postgres"
     assert error.field_path == "bindings"
-    assert error.context["cycle"] == [
-        "postgres",
-        "django",
-        "postgres",
-    ]
-    assert error.context["modules"] == [
-        "postgres",
-        "django",
-    ]
+    assert error.context == {
+        "cycle": [
+            "postgres",
+            "django",
+            "postgres",
+        ],
+        "modules": [
+            "postgres",
+            "django",
+        ],
+    }
+    assert error.suggestion is not None
 
 
 def test_resolver_stores_dependency_graph(
