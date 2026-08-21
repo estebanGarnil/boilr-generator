@@ -97,3 +97,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 {% if options.cors %}
 CORS_ALLOW_ALL_ORIGINS = True
 {% endif %}
+
+{% for setting_name, setting_value in extensions["django.settings"].items() %}
+{{ setting_name }} = {{ setting_value }}
+{% endfor %}

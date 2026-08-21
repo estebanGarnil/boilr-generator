@@ -51,6 +51,11 @@ extension_points:
     merge: append_unique
     default: []
 
+  django.settings:
+    type: dict
+    merge: deep_merge
+    default: {}
+
   database.backend:
     type: string
     merge: replace

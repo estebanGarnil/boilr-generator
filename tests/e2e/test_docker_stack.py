@@ -122,6 +122,7 @@ def test_generated_stack_starts_and_serves_health(
     assert running_services == {
         "backend",
         "db",
+        "redis",
     }
 
     database_readiness = (
@@ -143,6 +144,17 @@ def test_generated_stack_starts_and_serves_health(
         in database_readiness.stdout
     )
 
+    redis_readiness = docker_compose_project.run(
+        "exec",
+        "-T",
+        "redis",
+        "redis-cli",
+        "ping",
+        timeout=30,
+    )
+
+    assert redis_readiness.stdout.strip() == "PONG"
+
     docker_compose_project.run(
         "exec",
         "-T",
@@ -153,3 +165,24 @@ def test_generated_stack_starts_and_serves_health(
         "--check",
         timeout=60,
     )
+
+    cache_round_trip = docker_compose_project.run(
+        "exec",
+        "-T",
+        "backend",
+        "python",
+        "manage.py",
+        "shell",
+        "-c",
+        (
+            "from django.core.cache import cache; "
+            'cache.set("boilr-e2e", "connected", '
+            "timeout=30); "
+            'value = cache.get("boilr-e2e"); '
+            'assert value == "connected", value; '
+            "print(value)"
+        ),
+        timeout=60,
+    )
+
+    assert "connected" in cache_round_trip.stdout
