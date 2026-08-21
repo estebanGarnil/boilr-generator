@@ -1,7 +1,29 @@
+import ast
 from pathlib import Path
 
 import yaml
 
+
+def find_assignment_value(
+    source: str,
+    variable_name: str,
+):
+    parsed_module = ast.parse(source)
+
+    assignment = next(
+        node
+        for node in parsed_module.body
+        if (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == variable_name
+                for target in node.targets
+            )
+        )
+    )
+
+    return ast.literal_eval(assignment.value)
 
 def test_cli_generates_docker_e2e_inputs(
     generated_e2e_project: Path,
@@ -44,6 +66,7 @@ def test_cli_generates_docker_e2e_inputs(
     assert set(services) == {
         "backend",
         "db",
+        "redis",
     }
 
     backend = services["backend"]
@@ -89,6 +112,35 @@ def test_cli_generates_docker_e2e_inputs(
         ),
     }
 
+    redis = services["redis"]
+
+    assert redis == {
+        "image": "redis:7-alpine",
+        "restart": "unless-stopped",
+        "healthcheck": {
+            "test": [
+                "CMD",
+                "redis-cli",
+                "ping",
+            ],
+            "interval": "2s",
+            "timeout": "5s",
+            "retries": 15,
+            "start_period": "5s",
+        },
+        "ports": [
+            "16379:6379",
+        ],
+        "volumes": [
+            "redis_data:/data",
+        ],
+    }
+
+    assert compose["volumes"] == {
+        "postgres_data": {},
+        "redis_data": {},
+    }
+
     env_values = dict(
         line.split("=", maxsplit=1)
         for line in (
@@ -106,6 +158,12 @@ def test_cli_generates_docker_e2e_inputs(
     assert env_values["DB_HOST"] == "db"
     assert env_values["DB_PORT"] == "5432"
     assert env_values["DB_NAME"] == "docker_e2e"
+    assert env_values["REDIS_HOST"] == "redis"
+    assert env_values["REDIS_PORT"] == "6379"
+    assert env_values["REDIS_DATABASE"] == "0"
+    assert env_values["REDIS_URL"] == (
+        "redis://redis:6379/0"
+    )
 
     requirements = {
         line.strip()
@@ -120,6 +178,37 @@ def test_cli_generates_docker_e2e_inputs(
     }
 
     assert "psycopg[binary]" in requirements
+    assert (
+        "django-redis>=7.0,<8.0"
+        in requirements
+    )
+
+    settings = (
+        generated_e2e_project
+        / "backend"
+        / "config"
+        / "settings"
+        / "base.py"
+    ).read_text(
+        encoding="utf-8"
+    )
+
+    assert find_assignment_value(
+        settings,
+        "CACHES",
+    ) == {
+        "default": {
+            "BACKEND": (
+                "django_redis.cache.RedisCache"
+            ),
+            "LOCATION": "redis://redis:6379/0",
+            "OPTIONS": {
+                "CLIENT_CLASS": (
+                    "django_redis.client.DefaultClient"
+                ),
+            },
+        }
+    }
 
     config_urls = (
         generated_e2e_project
