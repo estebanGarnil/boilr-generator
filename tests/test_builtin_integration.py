@@ -1,3 +1,4 @@
+import ast
 from copy import deepcopy
 
 import pytest
@@ -28,6 +29,102 @@ def test_registry_discovers_django_postgres_integration(
     assert len(integration.requires) == 2
     assert len(integration.contributions) == 2
 
+def test_django_settings_extension_point_defaults_to_empty_dict(
+    resolved_project,
+):
+    extension_point = resolved_project.extension_point_for(
+        "django",
+        "django.settings",
+    )
+
+    assert extension_point is not None
+    assert extension_point.value_type == "dict"
+    assert extension_point.merge_strategy == "deep_merge"
+    assert extension_point.default == {}
+    assert extension_point.required is False
+
+    settings_value = resolved_project.extension_value_for(
+        "django",
+        "django.settings",
+    )
+
+    assert settings_value is not None
+    assert settings_value.value == {}
+    assert settings_value.contributor_module_keys == []
+
+
+def test_django_renders_contributed_settings_declaratively(
+    registry,
+    manifest,
+    resolved_project,
+    tmp_path,
+    monkeypatch,
+):
+    project = resolved_project.model_copy(deep=True)
+
+    settings_value = project.extension_value_for(
+        "django",
+        "django.settings",
+    )
+
+    assert settings_value is not None
+
+    cache_settings = {
+        "default": {
+            "BACKEND": (
+                "django_redis.cache.RedisCache"
+            ),
+            "LOCATION": "redis://redis:6379/0",
+        }
+    }
+
+    settings_value.value = {
+        "CACHES": cache_settings,
+    }
+    settings_value.contributor_module_keys = [
+        "test-cache-integration",
+    ]
+
+    generator = ProjectGenerator(registry)
+
+    monkeypatch.setattr(
+        generator.resolver,
+        "resolve",
+        lambda _: project,
+    )
+
+    plan = generator.plan(
+        manifest=manifest,
+        output_path=tmp_path / "generated",
+    )
+
+    planned_settings = next(
+        planned_file
+        for planned_file in plan.files
+        if planned_file.relative_destination_path
+        == "backend/config/settings/base.py"
+    )
+
+    parsed_settings = ast.parse(
+        planned_settings.content.decode("utf-8")
+    )
+
+    caches_assignment = next(
+        node
+        for node in parsed_settings.body
+        if (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "CACHES"
+                for target in node.targets
+            )
+        )
+    )
+
+    assert ast.literal_eval(
+        caches_assignment.value
+    ) == cache_settings
 
 def test_django_postgres_integration_resolves_declaratively(
     registry,
