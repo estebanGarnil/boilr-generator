@@ -1,0 +1,84 @@
+meta:
+  name: Redis
+  key: redis
+  type: cache
+  version: 1.0.0
+  description: Redis cache service for dockerized projects
+  tags:
+    - cache
+    - redis
+    - key-value
+
+role:
+  group: cache
+
+provides:
+  - capability: cache.connection
+    values:
+      host: redis
+      port: 6379
+      database: "{{ redis_database }}"
+      service: redis
+      url: "redis://redis:6379/{{ redis_database }}"
+
+variables:
+  redis_host_port:
+    type: int
+    required: true
+    default: 6379
+    description: Redis port exposed on the host
+
+  redis_database:
+    type: int
+    required: true
+    default: 0
+    description: Redis logical database used by the application
+
+options: {}
+
+assembly:
+  priority: 50
+  destination_root: cache
+
+sources:
+  copy: []
+  render: []
+
+docker:
+  services:
+    redis:
+      image: redis:7-alpine
+      restart: unless-stopped
+
+      healthcheck:
+        test:
+          - CMD
+          - redis-cli
+          - ping
+        interval: 2s
+        timeout: 5s
+        retries: 15
+        start_period: 5s
+
+      ports:
+        - "{{ redis_host_port }}:6379"
+
+      volumes:
+        - redis_data:/data
+
+  volumes:
+    redis_data: {}
+
+exports:
+  env:
+    REDIS_HOST: redis
+    REDIS_PORT: "6379"
+    REDIS_DATABASE: "{{ redis_database }}"
+    REDIS_URL: "redis://redis:6379/{{ redis_database }}"
+
+docs:
+  summary: Reusable Redis cache provider
+  notes:
+    - Uses the official Redis Docker image
+    - Exposes the cache.connection capability
+    - Uses the redis service name inside Docker Compose

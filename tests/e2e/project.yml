@@ -11,6 +11,11 @@ modules:
       db_password: docker-e2e-password
       db_port: 5432
 
+  - key: redis
+    variables:
+      redis_host_port: 16379
+      redis_database: 0
+
   - key: django
     variables:
       project_name: docker_e2e
@@ -26,3 +31,4 @@ modules:
       cors: true
 
   - key: django-postgres
+  - key: django-redis

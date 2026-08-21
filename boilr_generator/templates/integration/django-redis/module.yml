@@ -1,0 +1,69 @@
+meta:
+  name: Django Redis Integration
+  key: django-redis
+  type: integration
+  version: 1.0.0
+  description: Connects a Django backend to a Redis cache
+  tags:
+    - integration
+    - python
+    - django
+    - redis
+    - cache
+
+role:
+  group: integration
+
+requires:
+  - capability: backend.python
+    binding: backend
+    optional: false
+    unique: true
+    contract:
+      runtime: string
+      framework: string
+
+  - capability: cache.connection
+    binding: cache
+    optional: false
+    unique: true
+    contract:
+      host: string
+      port: int
+      database: int
+      service: string
+      url: string
+
+contributions:
+  - target: backend
+    extension_point: python.dependencies
+    value:
+      - django-redis>=7.0,<8.0
+
+  - target: backend
+    extension_point: django.settings
+    value:
+      CACHES:
+        default:
+          BACKEND: django_redis.cache.RedisCache
+          LOCATION: "{{ bindings.cache.url }}"
+          OPTIONS:
+            CLIENT_CLASS: django_redis.client.DefaultClient
+
+variables: {}
+options: {}
+
+assembly:
+  priority: 150
+  destination_root: .
+
+sources:
+  copy: []
+  render: []
+
+docs:
+  summary: Declarative Django and Redis integration
+  notes:
+    - Adds django-redis to the Python dependencies
+    - Configures Django CACHES through django.settings
+    - Uses the cache.connection capability supplied by Redis
