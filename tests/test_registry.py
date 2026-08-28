@@ -1,4 +1,5 @@
 import pytest
+
 from boilr_generator.exceptions import (
     DuplicateModuleError,
     ModuleNotFoundError,

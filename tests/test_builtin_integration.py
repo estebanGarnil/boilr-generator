@@ -2,6 +2,7 @@ import ast
 from copy import deepcopy
 
 import pytest
+
 from boilr_generator.exceptions import (
     InvalidContributionError,
 )

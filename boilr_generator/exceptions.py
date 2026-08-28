@@ -356,10 +356,10 @@ __all__ = [
     "SourceNotFoundError",
     "SourceReadError",
     "StaleGenerationPlanError",
-    "UnsafePathError",
-    "UnsupportedFilesystemEntryError",
     "TemplateRenderError",
     "UnknownExtensionPointError",
     "UnknownOptionError",
     "UnknownVariableError",
+    "UnsafePathError",
+    "UnsupportedFilesystemEntryError",
 ]

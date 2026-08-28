@@ -2,10 +2,11 @@ import json
 from pathlib import Path
 
 import pytest
-from boilr_generator import cli
-from boilr_generator.exceptions import ManifestNotFoundError
 from click import unstyle
 from typer.testing import CliRunner
+
+from boilr_generator import cli
+from boilr_generator.exceptions import ManifestNotFoundError
 
 runner = CliRunner()
 
