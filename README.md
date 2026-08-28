@@ -1,189 +1,371 @@
 # Boilr Generator
 
-> 🚧 Currently developed and maintained by a single contributor.
+[![CI](https://github.com/estebanGarnil/boilr-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/estebanGarnil/boilr-generator/actions/workflows/ci.yml)
+[![Docker E2E](https://github.com/estebanGarnil/boilr-generator/actions/workflows/docker-e2e.yml/badge.svg)](https://github.com/estebanGarnil/boilr-generator/actions/workflows/docker-e2e.yml)
 
-Boilr Generator is a modular project scaffolding engine designed to generate complete dockerized application stacks from reusable modules.
+Boilr Generator is a modular scaffolding engine for assembling complete Dockerized application stacks from declarative YAML or JSON manifests.
 
-Instead of maintaining dozens of project templates, Boilr allows you to describe a project using YAML or JSON and generate a complete, ready-to-run application structure.
+Instead of maintaining one template for every technology combination, Boilr composes reusable modules. The current built-in stack combines Django, PostgreSQL, and Redis through explicit integration modules.
 
-The core engine is framework-agnostic and can be used from:
+> Boilr is currently maintained by a single contributor and is under active pre-1.0 development.
 
-* a CLI
-* a backend API
-* a web frontend
-* custom integrations
+## Features
 
----
+- Declarative project manifests
+- Reusable backend, database, cache, and integration modules
+- Typed capabilities, requirements, and bindings
+- Provider selection by module, PEP 440 version constraint, and tags
+- Deterministic dependency resolution and cycle detection
+- Typed extension points and contributions
+- Complete generation plans before filesystem mutation
+- Immutable dry runs with human-readable and JSON output
+- Create, overwrite, skip, clean, and replace operations
+- SHA-256 fingerprints and content sizes for planned files
+- Safe path boundaries and structured diagnostics
+- Docker Compose and environment-file generation
+- Linux and Windows support on Python 3.11 through 3.14
+- Wheel and source-distribution verification in CI
+- Real Docker E2E coverage for Django, PostgreSQL, and Redis
 
-## Why Boilr?
+## Installation
 
-Modern applications rarely consist of a single framework.
+Boilr requires Python 3.11 or newer.
 
-A production-ready project often requires:
+### Install from the repository
 
-* an application framework
-* a database
-* a cache
-* environment variables
-* Docker configuration
-* service orchestration
+Clone the repository, create a virtual environment, and install the package:
 
-Boilr is designed to generate complete Dockerized application stacks from reusable modules.
+~~~bash
+git clone https://github.com/estebanGarnil/boilr-generator.git
+cd boilr-generator
+python -m venv .venv
+~~~
 
-Instead of maintaining dozens of project templates, a project is assembled from independent modules:
+Activate the environment on Linux or macOS:
 
-```text
-Django
-+
-PostgreSQL
-+
-Redis
-+
-Nginx
-```
+~~~bash
+source .venv/bin/activate
+~~~
 
-For example, a user could generate:
+Activate it in Windows PowerShell:
 
-- Django + PostgreSQL
-- FastAPI + MongoDB
-- NestJS + Redis + RabbitMQ
-- React + FastAPI + PostgreSQL
+~~~powershell
+.venv\Scripts\Activate.ps1
+~~~
 
-without maintaining separate project templates.
+Install Boilr:
 
-The engine validates, resolves and assembles the final stack automatically.
+~~~bash
+python -m pip install .
+~~~
 
-The generated project is designed to run immediately using Docker Compose.
+The installation exposes the `boilr` command. The module entry point remains available as `python -m boilr_generator.cli`.
 
-## Vision
+### Development installation
 
-Boilr aims to become a modular ecosystem for building complete Dockerized application stacks.
+Install the package with its development dependencies:
 
-The long-term goal is to allow developers to assemble projects from reusable modules through:
+~~~bash
+python -m pip install -e ".[dev]"
+~~~
 
-- a CLI
-- a backend API
-- a web interface
+## Quick start
 
-Rather than maintaining hundreds of project templates, contributors can build reusable modules that work together across the ecosystem.
+Create a `project.yml` manifest:
 
-## Philosophy
-
-Boilr is intentionally interface-agnostic.
-
-The project manifest is the contract between the user interface and the generator core.
-
-The manifest may be produced by:
-- a CLI
-- a web interface
-- a backend API
-- automation tools
-
-Boilr only focuses on validation, resolution and generation.
-You can build your own CLI, web app, SaaS interface, or internal automation tool on top of Boilr.
-
-```
-CLI / Web UI / API / Automation
-                ↓
-            manifest
-                ↓
-       Boilr Generator Core
-                ↓
-       Generated Application
-```
-
-
-## Why I Started Boilr
-
-Like many developers, I found myself rebuilding the same foundations over and over again:
-
-a backend, a database, Docker configuration, environment variables, and deployment setup.
-
-At first, project templates seemed like the obvious solution. But as the number of projects and technologies grew, maintaining those templates became more difficult than maintaining the projects themselves.
-
-Boilr was born from a simple idea:
-
-instead of maintaining reusable projects, maintain reusable modules that can be assembled together to create complete Dockerized application stacks.
-
-## Architecture
-
-```text
-project.yml
-    ->
-ProjectManifest
-    ->
-ModuleRegistry
-    ->
-Resolver
-    |- capability providers
-    |- capability requirements
-    |- typed bindings
-    |- dependency graph
-    |- extension points
-    `- contributions
-    ->
-ResolvedProject
-    ->
-GenerationPlan
-    ->
-ProjectGenerator.execute(plan)
-    ->
-Generated Project
-```
-
-The resolver is declarative: modules describe what they provide, what they consume, and how they contribute to other modules. Technology-specific decisions belong in integration modules rather than in the core engine.
-
-### Manifest
-
-A project manifest selects modules and supplies their variables and options.
-
-```yaml
+~~~yaml
 project:
   name: my_app
   type: fullstack_web
-  version: "1.0.0"
+  version: 1.0.0
 
 modules:
   - key: postgres
     variables:
       db_name: my_app
       db_user: my_app
-      db_password: password
+      db_password: change-me
+      db_port: 5432
+
+  - key: redis
+    variables:
+      redis_host_port: 6379
+      redis_database: 0
 
   - key: django
     variables:
       project_name: my_app
-      secret_key: dev-secret
-
+      django_settings_module: config.settings.local
+      backend_port: 8000
+      secret_key: change-me
+      debug: true
+      allowed_hosts:
+        - localhost
+        - 127.0.0.1
     options:
       rest_framework: true
       cors: true
 
   - key: django-postgres
-```
+  - key: django-redis
+~~~
 
-### Validation
+Preview every planned operation without writing anything:
 
-Before generation, Boilr validates:
+~~~bash
+boilr dry-run project.yml generated-project --info
+~~~
 
-- requested module existence;
-- required variables and their types;
-- option types;
-- capability contracts;
-- missing or ambiguous capability providers;
-- dependency cycles;
-- contribution targets and value types;
-- extension-point merge conflicts;
-- generated file conflicts;
-- copy strategies and planned removal safety.
+Generate the project:
+
+~~~bash
+boilr generate project.yml generated-project --info
+~~~
+
+Start the generated stack:
+
+~~~bash
+cd generated-project
+docker compose up --build
+~~~
+
+The resulting Compose stack contains three services:
+
+- `backend`: Django
+- `db`: PostgreSQL
+- `redis`: Redis
+
+The integration modules also add:
+
+- `psycopg[binary]` and the PostgreSQL Django backend
+- `django-redis` and the Django `CACHES` configuration
+
+The credentials in this example are intended only for local development. Replace them before using a generated project in another environment.
+
+## Project manifest
+
+A manifest contains project metadata and an ordered list of selected modules.
+
+~~~yaml
+project:
+  name: my_app
+  type: fullstack_web
+  version: 1.0.0
+
+modules:
+  - key: postgres
+    variables:
+      db_name: my_app
+      db_user: my_app
+      db_password: change-me
+    options: {}
+~~~
+
+### Project metadata
+
+| Field | Description |
+| --- | --- |
+| `name` | Project name |
+| `type` | Project category used by the caller |
+| `version` | Project version |
+
+### Module inputs
+
+Each module selection accepts:
+
+| Field | Description |
+| --- | --- |
+| `key` | Built-in or registered module key |
+| `variables` | Values declared by the module's variable schema |
+| `options` | Optional feature switches declared by the module |
+| `bindings` | Optional provider-selection criteria for named requirements |
+
+Unknown modules, variables, and options are rejected. Required values and declared types are validated before resolution.
+
+### Provider selection
+
+When a capability has several possible providers, the consumer can select one through the requirement's binding name:
+
+~~~yaml
+modules:
+  - key: django
+    bindings:
+      primary_database:
+        provider: postgres
+        version: ">=1,<2"
+        tags:
+          - database
+          - sql
+~~~
+
+The available criteria are:
+
+| Criterion | Meaning |
+| --- | --- |
+| `provider` | Exact provider module key |
+| `version` | PEP 440 version specifier matched against the provider module version |
+| `tags` | Tags that must all be present on the provider |
+
+Criteria are combined with logical AND. A direct selection must contain at least one criterion.
+
+If no provider matches, Boilr raises a structured provider-selection error. If a unique requirement still matches multiple providers, Boilr reports the remaining candidates as ambiguous.
+
+## Built-in modules
+
+| Key | Type | Contract |
+| --- | --- | --- |
+| `django` | Backend | Provides `backend.python`, requires one `database.connection` |
+| `postgres` | Database | Provides `database.connection` and the `db` service |
+| `redis` | Cache | Provides `cache.connection` and the `redis` service |
+| `django-postgres` | Integration | Connects the Python backend to PostgreSQL |
+| `django-redis` | Integration | Connects Django to Redis |
+
+### Django
+
+Required variables:
+
+| Variable | Type | Default |
+| --- | --- | --- |
+| `project_name` | string | none |
+| `django_settings_module` | string | `config.settings.local` |
+| `backend_port` | integer | `8000` |
+| `secret_key` | string | none |
+| `debug` | boolean | `true` |
+| `allowed_hosts` | list | `localhost`, `127.0.0.1` |
+
+Options:
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `rest_framework` | boolean | `true` |
+| `cors` | boolean | `true` |
+
+### PostgreSQL
+
+| Variable | Type | Default |
+| --- | --- | --- |
+| `db_name` | string | none |
+| `db_user` | string | none |
+| `db_password` | string | none |
+| `db_port` | integer | `5432` |
+
+### Redis
+
+| Variable | Type | Default |
+| --- | --- | --- |
+| `redis_host_port` | integer | `6379` |
+| `redis_database` | integer | `0` |
+
+## Command-line interface
+
+~~~text
+boilr [OPTIONS] COMMAND [ARGS]...
+~~~
+
+Available commands:
+
+| Command | Description |
+| --- | --- |
+| `dry-run` | Build and display a generation plan without mutating the output |
+| `generate` | Build a plan and execute it |
+
+### Preview a generation
+
+~~~text
+boilr dry-run [OPTIONS] MANIFEST_PATH OUTPUT_PATH
+~~~
+
+Options:
+
+| Option | Description |
+| --- | --- |
+| `--info` | Show the detailed human-readable plan |
+| `--json` | Print the complete serialized plan |
+| `--clean` | Preview cleanup of the output directory |
+| `--debug` | Show the complete traceback when an error occurs |
+
+Even with `--clean`, a dry run does not create, overwrite, remove, or change permissions on any path.
+
+Example:
+
+~~~bash
+boilr dry-run project.yml generated-project --clean --json
+~~~
+
+### Generate a project
+
+~~~text
+boilr generate [OPTIONS] MANIFEST_PATH OUTPUT_PATH
+~~~
+
+Options:
+
+| Option | Description |
+| --- | --- |
+| `--info` | Show the generation plan before writing |
+| `--clean` | Plan cleanup before generation |
+| `--debug` | Show the complete traceback when an error occurs |
+
+Example:
+
+~~~bash
+boilr generate project.yml generated-project --clean --info
+~~~
+
+## Dry-run JSON contract
+
+The JSON representation contains metadata rather than complete file contents:
+
+| Field | Description |
+| --- | --- |
+| `resolved_project` | Project metadata and resolved module order |
+| `output_path` | Absolute destination path |
+| `initial_output_state` | Filesystem snapshot used to protect plan execution |
+| `directories` | Directories that execution must create |
+| `files` | Complete file operations without embedded content bytes |
+| `removals` | Exact clean or replace removals |
+| `docker_services` | Generated Compose service names |
+| `env_variables` | Generated environment-variable names |
+| `clean_output` | Whether cleanup was requested |
+| `summary` | Stable operation counters and byte totals |
+
+Each planned file includes:
+
+~~~json
+{
+  "source_path": "/absolute/source/path",
+  "destination_path": "/absolute/output/backend/manage.py",
+  "relative_destination_path": "backend/manage.py",
+  "operation": "render",
+  "action": "create",
+  "module": "django",
+  "mode": 438,
+  "content_size": 684,
+  "content_sha256": "..."
+}
+~~~
+
+Possible file actions are `create`, `overwrite`, and `skip`.
+
+The summary reports:
+
+- selected module count
+- captured initial paths
+- directories to create
+- files to create, overwrite, or skip
+- clean and replace removal counts
+- Docker service and environment-variable counts
+- total prepared bytes and bytes that execution would write
+
+## Resolution model
 
 ### Capabilities and bindings
 
 Modules communicate through typed capabilities.
 
-A provider exposes a capability and its values:
+A provider exposes values:
 
-```yaml
+~~~yaml
 provides:
   - capability: database.connection
     values:
@@ -194,11 +376,11 @@ provides:
       user: "{{ db_user }}"
       password: "{{ db_password }}"
       service: db
-```
+~~~
 
-A consumer declares the capability it needs:
+A consumer declares a named requirement:
 
-```yaml
+~~~yaml
 requires:
   - capability: database.connection
     binding: primary_database
@@ -212,343 +394,363 @@ requires:
       user: string
       password: string
       service: string
-```
+~~~
 
-The resolver matches providers to consumers and creates typed bindings. Templates can access them through Jinja:
+The resolver validates the provider values against the requirement contract and exposes the result to templates as a typed binding:
 
-```jinja
+~~~jinja
 {{ bindings.primary_database.host }}
 {{ bindings.primary_database.port }}
 {{ bindings.primary_database.service }}
-```
+~~~
 
-When `unique` is `false`, the binding contains a list of matching provider values.
+When `unique` is false, the binding contains a list of matching providers.
 
-### Extension points and contributions
+### Dependency graph
 
-A module can expose typed extension points:
+Bindings create dependency edges. Boilr uses the resulting graph to:
 
-```yaml
+- order modules deterministically
+- assemble providers before consumers
+- place integration modules after the modules they connect
+- reject dependency cycles
+
+## Extension points and contributions
+
+A consumer can expose typed extension points:
+
+~~~yaml
 extension_points:
   python.dependencies:
     type: list
     merge: append_unique
     default: []
 
+  django.settings:
+    type: dict
+    merge: deep_merge
+    default: {}
+
   database.backend:
     type: string
     merge: replace
     required: true
-```
+~~~
 
-Integration modules contribute through one of their declared bindings:
+An integration module contributes through a declared binding:
 
-```yaml
+~~~yaml
 contributions:
   - target: backend
     extension_point: python.dependencies
     value:
-      - psycopg[binary]
+      - django-redis>=7.0,<8.0
 
   - target: backend
-    extension_point: database.backend
-    value: django.db.backends.postgresql
-```
+    extension_point: django.settings
+    value:
+      CACHES:
+        default:
+          BACKEND: django_redis.cache.RedisCache
+          LOCATION: "{{ bindings.cache.url }}"
+~~~
 
-Contribution values can use the contributor's variables, options, and bindings. Rendering uses native Jinja values, so integers, booleans, lists, and dictionaries keep their types.
+Supported merge strategies:
 
-Supported extension-point merge strategies are:
+| Value type | Strategies |
+| --- | --- |
+| Scalar | `replace` |
+| List | `replace`, `append`, `append_unique` |
+| Dictionary | `replace`, `deep_merge` |
 
-- scalar values: `replace`;
-- lists: `replace`, `append`, `append_unique`;
-- dictionaries: `replace`, `deep_merge`.
+Required extension points must receive a contribution. Incompatible contributions and duplicate replacements are reported before generation.
 
-Required extension points must receive at least one contribution.
+## Planning and execution
 
-### Dependency graph
+Boilr separates generation into two phases:
 
-Capability bindings create dependency edges between modules. Boilr uses this graph to:
+~~~text
+manifest
+   |
+   v
+validation and resolution
+   |
+   v
+GenerationPlan
+   |
+   v
+execute(plan)
+   |
+   v
+generated project
+~~~
 
-- order modules deterministically;
-- ensure providers are assembled before consumers;
-- place integration modules after the modules they connect;
-- reject dependency cycles.
+### Planning
 
-### Generation Plan
+Planning performs:
 
-Before writing anything, Boilr creates a complete and inspectable `GenerationPlan`.
+- manifest and module-input validation
+- capability resolution and provider selection
+- contribution merging
+- dependency ordering
+- template rendering
+- copy-strategy resolution
+- Docker Compose generation
+- environment generation
+- collision detection
+- output-state capture
 
-The plan contains:
+It returns a complete `GenerationPlan` without mutating the filesystem.
 
-- the resolved project;
-- every destination path;
-- final file contents as bytes;
-- create, overwrite, or skip actions;
-- SHA-256 fingerprints and content sizes;
-- Docker services and environment-variable names;
-- planned removals;
-- the `clean_output` decision.
+### Execution
 
-Planning performs template rendering, Docker generation, environment generation, collision detection, and copy-strategy resolution.
+Execution applies only the prepared plan. It does not resolve modules, rerender templates, or regenerate Docker and environment configuration.
 
-`execute(plan)` applies only the prepared plan. It does not resolve modules or regenerate file contents. This guarantees that a successful preview represents the execution that follows.
+Before writing, execution verifies the captured initial output state. A stale or externally modified plan is rejected.
 
-Use `--info` to display the plan:
+This separation provides two guarantees:
 
-```powershell
-python -m boilr_generator.cli generate `
-    project.yml `
-    generated-project `
-    --info
-```
+1. A successful dry run describes every mutation that execution would perform.
+2. Executing an unchanged plan writes the exact prepared bytes and applies the planned removals and modes.
 
 ### Copy strategies
 
-Copy sources support three strategies:
+| Strategy | Behavior |
+| --- | --- |
+| `merge` | Merge the source tree; source files replace matching destinations while unrelated destinations remain |
+| `skip` | Leave an existing destination tree unchanged |
+| `replace` | Remove the destination safely, then recreate it from the source |
 
-- `merge`: combine the source tree with the destination. Source files overwrite files at the same paths, while unrelated destination files remain;
-- `skip`: if the destination exists, leave the complete destination unchanged;
-- `replace`: plan removal of the destination, then create it again from the source.
+Replace and clean removals are restricted to paths inside the project output directory.
 
-Example:
+## Diagnostics and safety
 
-```yaml
-sources:
-  copy:
-    - from: files/apps
-      to: backend/apps
-      strategy: merge
-```
+All expected failures derive from `BoilrError` and expose structured context such as:
 
-Planned removals are restricted to paths strictly inside the project output directory.
+- a stable error code
+- a human-readable message
+- the affected module
+- the manifest or generation field path
+- machine-readable context
+- an optional remediation suggestion
 
-### Generation
+Boilr validates or protects:
 
-The generator applies the plan and creates:
+- manifest structure
+- duplicate and unknown modules
+- unknown variables and options
+- required values and input types
+- provider versions and tag criteria
+- missing and ambiguous capabilities
+- binding contracts
+- dependency cycles
+- extension-point targets, types, and conflicts
+- template rendering
+- generated file collisions
+- environment-variable names and values
+- source reads and output writes
+- output, clean, and replacement path boundaries
+- symbolic links and unsupported filesystem entries
+- stale generation plans
 
-- copied module files;
-- rendered templates;
-- Docker Compose configuration;
-- the project `.env` file.
+Use `--debug` to include the complete traceback for unexpected failures. Without it, the CLI renders the structured Boilr diagnostic.
 
-With `--clean`, output cleanup becomes part of the plan and all resulting files are planned as creations.
+Canonical exceptions are exported from:
 
----
-
-## Example
-
-### Input
-
-```yaml
-project:
-  name: blog
-  type: fullstack_web
-  version: "1.0.0"
-
-modules:
-  - key: postgres
-    variables:
-      db_name: blog
-      db_user: blog
-      db_password: password
-
-  - key: django
-    variables:
-      project_name: blog
-      secret_key: dev-secret
-
-  - key: django-postgres
-```
-
-### Output
-
-```text
-blog/
-|-- backend/
-|   |-- apps/
-|   |-- config/
-|   |-- Dockerfile
-|   |-- manage.py
-|   `-- requirements.txt
-|-- docker-compose.yml
-`-- .env
-```
-
-The Django/PostgreSQL integration contributes:
-
-- `psycopg[binary]` to `backend/requirements.txt`;
-- `django.db.backends.postgresql` to Django settings.
-
----
-
-## Features
-
-- Declarative modular architecture
-- YAML and JSON project manifests
-- Typed capability providers and requirements
-- Automatic capability bindings
-- Deterministic dependency graph
-- Cycle detection
-- Typed extension points and contributions
-- Dynamic native-Jinja contributions
-- Explicit contribution conflict detection
-- Complete deterministic generation plans
-- Dry-run plan previews
-- Safe copy strategies
-- Docker Compose generation
-- Environment generation
-- Strict template rendering
-- Structured diagnostics
-- Fully tested core engine
-
----
-
-## Current Modules
-
-### Backend
-
-- Django
-
-### Database
-
-- PostgreSQL
-
-### Integrations
-
-- Django + PostgreSQL
-
-More modules are planned.
-
----
-
-## Project Status
-
-Boilr is under active development.
-
-The core engine can resolve declarative module contracts, assemble integration contributions, build deterministic generation plans, and generate a complete Dockerized Django/PostgreSQL project.
-
-The public exception compatibility exports are temporarily preserved to avoid breaking existing imports. New code should import canonical exceptions from:
-
-```python
+~~~python
 from boilr_generator.exceptions import BoilrError
-```
+~~~
 
----
+Compatibility exports from older exception modules remain available temporarily, but new code should use the canonical module.
 
-## Roadmap
+## Internal architecture
 
-### Core Engine
+~~~text
+project.yml
+    |
+    v
+ProjectManifest
+    |
+    v
+ModuleRegistry
+    |
+    v
+Resolver
+    |-- capabilities and requirements
+    |-- provider selections
+    |-- typed bindings
+    |-- dependency graph
+    |-- extension points
+    â””â”€â”€ contributions
+    |
+    v
+ResolvedProject
+    |
+    v
+GenerationPlan
+    |
+    v
+ProjectGenerator.execute(plan)
+    |
+    v
+Generated project
+~~~
 
-- [x] Manifest system
-- [x] Module registry
-- [x] Typed capabilities
-- [x] Capability bindings
-- [x] Dependency graph and cycle detection
-- [x] Typed extension points
-- [x] Dynamic contributions
-- [x] Deterministic generation plan
-- [x] Safe copy strategies
-- [x] Project generation
-- [x] CLI
+Technology-specific behavior belongs in modules and integrations. The resolver and generation engine remain framework-agnostic.
 
-### Platform
+## Creating a module
 
-- [ ] Django API
-- [ ] Web interface
-- [ ] Module marketplace
+Built-in modules are stored by category:
 
-### Ecosystem
+~~~text
+boilr_generator/templates/
+|-- backend/
+|   â””â”€â”€ django/
+|-- database/
+|   â””â”€â”€ postgres/
+|-- cache/
+|   â””â”€â”€ redis/
+â””â”€â”€ integration/
+    |-- django-postgres/
+    â””â”€â”€ django-redis/
+~~~
 
-- [ ] React module
-- [ ] Vue module
-- [ ] FastAPI module
-- [ ] MySQL integration
-- [ ] MongoDB module
-- [ ] Redis module
-- [ ] RabbitMQ module
+A module contains a `module.yml` manifest and optional source files:
 
----
+~~~text
+module/
+|-- module.yml
+â””â”€â”€ files/
+~~~
 
+The module manifest can define:
+
+| Section | Purpose |
+| --- | --- |
+| `meta` | Name, key, type, version, description, and tags |
+| `role` | Module role group |
+| `dependencies` | Base and optional generated dependencies |
+| `provides` | Capabilities exposed by the module |
+| `requires` | Named capability requirements and contracts |
+| `extension_points` | Typed contribution targets |
+| `contributions` | Values contributed through bindings |
+| `variables` | Required and defaulted module variables |
+| `options` | Optional module features |
+| `assembly` | Priority and destination root |
+| `sources.copy` | File trees copied with a declared strategy |
+| `sources.render` | Jinja templates and destinations |
+| `docker` | Compose services and volumes |
+| `exports.env` | Generated environment variables |
+| `docs` | Inline module summary and notes |
+
+Integration modules often have no source files. They connect other modules by requiring their capabilities and contributing dependencies or configuration through extension points.
+
+When adding a module:
+
+1. keep technology-specific decisions outside the core engine
+2. declare all variables, options, and capability contracts
+3. use an integration module for cross-technology behavior
+4. add resolver, generation, and conflict tests
+5. add a real Docker E2E scenario when practical
+
+Open an issue before starting a large module contribution.
+
+## Development and testing
+
+Install development dependencies:
+
+~~~bash
+python -m pip install -e ".[dev]"
+~~~
+
+Run the complete test suite:
+
+~~~bash
+python -m pytest -q
+~~~
+
+Run Ruff:
+
+~~~bash
+python -m ruff check .
+~~~
+
+Build the wheel and source distribution:
+
+~~~bash
+python -m build
+~~~
+
+Run the Docker E2E test on Linux or macOS:
+
+~~~bash
+BOILR_RUN_DOCKER_E2E=1 python -m pytest -q tests/e2e/test_docker_stack.py -m docker_e2e -W error
+~~~
+
+Run it in Windows PowerShell:
+
+~~~powershell
+$env:BOILR_RUN_DOCKER_E2E = "1"
+python -m pytest -q tests\e2e\test_docker_stack.py -m docker_e2e -W error
+Remove-Item Env:BOILR_RUN_DOCKER_E2E
+~~~
+
+CI validates:
+
+- Python 3.11, 3.12, 3.13, and 3.14
+- Ubuntu and Windows
+- the complete test suite
+- Ruff
+- wheel and source-distribution contents
+- installation of the wheel outside the source tree
+- built-in module discovery from the installed wheel
+- generation from the installed package
+- a real Django, PostgreSQL, and Redis Docker stack
+
+## Project status and roadmap
+
+Version 0.1.0 is functional and under active development.
+
+The current engine supports:
+
+- strict manifest and module-input validation
+- declarative capability resolution
+- advanced provider selection
+- typed contributions
+- deterministic and exhaustive planning
+- safe plan execution
+- Dockerized Django, PostgreSQL, and Redis generation
+- cross-platform CI and distribution verification
+
+Potential future work includes:
+
+- a Django API around the generator
+- a web interface
+- a module marketplace
+- additional backend and frontend modules
+- MySQL, MongoDB, and message-queue providers
+- reverse-proxy and deployment modules
 
 ## Contributing
 
-Contributions are welcome.
+Contributions are welcome. See [CONTRIBUTING.MD](CONTRIBUTING.MD) for development and contribution guidance.
 
-The project currently needs help with:
+Useful contributions include:
 
-* new modules
-* module documentation
-* example manifests
-* testing
-* CLI development
-* frontend development
-
-### Creating a module
-
-Each module contains:
-
-```text
-module/
-├── module.yml
-├── files/
-└── docs/
-```
-
-Example categories:
-
-* FastAPI
-* Next.js
-* React
-* Vue
-* MongoDB
-* RabbitMQ
-* Elasticsearch
-* Celery
-* Traefik
-
-If you would like to contribute a module, please open an issue before starting implementation.
-
----
-
-## Testing
-
-Run all tests:
-
-```bash
-pytest
-```
-
-Current test coverage includes:
-
-* manifest validation
-* module loading
-* resolver behavior
-* generation plan
-* file generation
-
----
-
-## About the Project
-
-Boilr is currently developed and maintained by a single contributor.
-
-The project started as an exploration of a simple question:
-
-How can we generate complete Dockerized application stacks without maintaining dozens of independent templates?
-
-Today, the core engine is functional and tested, but the ecosystem is still in its early stages.
-
-Contributions are highly appreciated, whether through:
-
-- new modules
-- improvements to existing modules
+- new modules and integrations
+- examples
 - documentation
-- testing
-- engine improvements
+- cross-platform tests
+- diagnostics and safety improvements
 
-If the project interests you, don't hesitate to open an issue or start a discussion.
+## Why Boilr exists
+
+Modern projects repeatedly need the same foundations: an application framework, database, cache, environment configuration, containers, and service orchestration.
+
+Maintaining a full template for every possible combination does not scale. Boilr instead treats each technology as a reusable module and each cross-technology decision as an explicit integration.
+
+The long-term goal is an interface-agnostic ecosystem in which a CLI, API, web application, or automation can produce the same manifest and rely on the same deterministic generator core.
 
 ## License
 
-MIT License
-
+Boilr is distributed under the [MIT License](LICENSE).
