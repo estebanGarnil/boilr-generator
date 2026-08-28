@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from boilr_generator import cli
 from boilr_generator.exceptions import ManifestNotFoundError
+from click import unstyle
 from typer.testing import CliRunner
 
 runner = CliRunner()
@@ -44,7 +45,7 @@ def test_dry_run_clean_option_is_available():
     )
 
     assert result.exit_code == 0
-    assert "--clean" in result.output
+    assert "--clean" in unstyle(result.output)
 
 def test_dry_run_clean_json_is_exhaustive_and_immutable(
     registry,
@@ -427,4 +428,4 @@ def test_debug_option_is_available(
     )
 
     assert result.exit_code == 0
-    assert "--debug" in result.output
+    assert "--debug" in unstyle(result.output)
