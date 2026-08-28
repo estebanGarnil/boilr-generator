@@ -192,7 +192,7 @@ def test_capture_output_state_does_not_follow_symbolic_links(
 
     assert link_state.kind == "symlink"
     assert link_state.link_target is not None
-    assert Path(link_state.link_target) == (
+    assert Path(link_state.link_target).samefile(
         outside_directory
     )
     assert outside_file.read_text(
