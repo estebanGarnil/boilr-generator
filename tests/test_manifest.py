@@ -1,4 +1,5 @@
 import pytest
+
 from boilr_generator.exceptions import ManifestSchemaError
 from boilr_generator.manifest import load_project_manifest_from_dict
 

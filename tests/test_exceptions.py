@@ -1,4 +1,5 @@
 import pytest
+
 from boilr_generator.core.exceptions import (
     ModuleNotFoundError as LegacyModuleNotFoundError,
 )

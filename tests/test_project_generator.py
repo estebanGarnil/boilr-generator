@@ -2,6 +2,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
     PlannedDirectory,
