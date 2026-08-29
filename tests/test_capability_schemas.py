@@ -1,6 +1,7 @@
 import pytest
-from boilr_generator.modules.schemas import ModuleManifest
 from pydantic import ValidationError
+
+from boilr_generator.modules.schemas import ModuleManifest
 
 
 def get_module_manifest_data(

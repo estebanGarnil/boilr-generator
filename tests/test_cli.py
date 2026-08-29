@@ -2,9 +2,11 @@ import json
 from pathlib import Path
 
 import pytest
+from rich.text import Text
+from typer.testing import CliRunner
+
 from boilr_generator import cli
 from boilr_generator.exceptions import ManifestNotFoundError
-from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -44,7 +46,7 @@ def test_dry_run_clean_option_is_available():
     )
 
     assert result.exit_code == 0
-    assert "--clean" in result.output
+    assert "--clean" in Text.from_ansi(result.output).plain
 
 def test_dry_run_clean_json_is_exhaustive_and_immutable(
     registry,
@@ -427,4 +429,4 @@ def test_debug_option_is_available(
     )
 
     assert result.exit_code == 0
-    assert "--debug" in result.output
+    assert "--debug" in Text.from_ansi(result.output).plain

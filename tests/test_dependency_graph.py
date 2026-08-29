@@ -1,4 +1,5 @@
 import pytest
+
 from boilr_generator.core import CapabilityBinding
 from boilr_generator.exceptions import (
     BindingError,

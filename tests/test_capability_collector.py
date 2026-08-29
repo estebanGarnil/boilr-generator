@@ -1,4 +1,5 @@
 import pytest
+
 from boilr_generator.exceptions import TemplateRenderError
 from boilr_generator.modules.schemas import (
     ProvidedCapability,

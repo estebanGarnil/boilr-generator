@@ -1,0 +1,203 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "boilr_generator/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "boilr_generator/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+        python-version:
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run Ruff
+        run: python -m ruff check .
+
+  package:
+    name: Build and verify distributions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install build frontend
+        run: python -m pip install build
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Inspect distribution contents
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+
+          dist_path = Path("dist")
+          wheels = sorted(dist_path.glob("*.whl"))
+          sdists = sorted(dist_path.glob("*.tar.gz"))
+
+          assert len(wheels) == 1, wheels
+          assert len(sdists) == 1, sdists
+
+          required_wheel_paths = {
+              "boilr_generator/templates/backend/django/module.yml",
+              "boilr_generator/templates/backend/django/files/templates/.env.j2",
+              "boilr_generator/templates/database/postgres/module.yml",
+              "boilr_generator/templates/cache/redis/module.yml",
+              "boilr_generator/templates/integration/django-postgres/module.yml",
+              "boilr_generator/templates/integration/django-redis/module.yml",
+          }
+
+          with zipfile.ZipFile(wheels[0]) as archive:
+              wheel_names = set(archive.namelist())
+              missing_wheel_paths = sorted(required_wheel_paths - wheel_names)
+              forbidden_wheel_paths = sorted(
+                  name
+                  for name in wheel_names
+                  if name.startswith("tests/")
+                  or "__pycache__" in name
+                  or name.endswith(".pyc")
+              )
+              metadata_paths = sorted(
+                  name
+                  for name in wheel_names
+                  if name.endswith(".dist-info/METADATA")
+              )
+
+              assert not missing_wheel_paths, missing_wheel_paths
+              assert not forbidden_wheel_paths, forbidden_wheel_paths
+              assert len(metadata_paths) == 1, metadata_paths
+
+              metadata = archive.read(metadata_paths[0]).decode("utf-8")
+              assert "Requires-Python: >=3.11" in metadata
+
+          required_sdist_suffixes = {
+              "/README.md",
+              "/LICENSE",
+              "/pyproject.toml",
+              "/boilr_generator/templates/cache/redis/module.yml",
+              "/boilr_generator/templates/integration/django-redis/module.yml",
+          }
+
+          with tarfile.open(sdists[0]) as archive:
+              sdist_names = archive.getnames()
+
+          missing_sdist_paths = sorted(
+              suffix
+              for suffix in required_sdist_suffixes
+              if not any(name.endswith(suffix) for name in sdist_names)
+          )
+
+          assert not missing_sdist_paths, missing_sdist_paths
+
+          print(f"Wheel vérifié : {wheels[0].name}")
+          print(f"Sdist vérifié : {sdists[0].name}")
+          PY
+
+      - name: Install and smoke-test wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_root="$PWD"
+          audit_root="$RUNNER_TEMP/boilr-wheel-smoke"
+
+          python -m venv "$audit_root/venv"
+
+          venv_python="$audit_root/venv/bin/python"
+          wheel_path="$(find "$package_root/dist" -maxdepth 1 -name '*.whl' -print -quit)"
+
+          test -n "$wheel_path"
+
+          "$venv_python" -m pip install \
+            --disable-pip-version-check \
+            "$wheel_path"
+
+          "$venv_python" -m pip check
+
+          mkdir -p "$audit_root/work"
+          cd "$audit_root/work"
+
+          "$venv_python" -c "from pathlib import Path; import boilr_generator; path=Path(boilr_generator.__file__).resolve(); print('Package importé depuis :', path); assert 'site-packages' in path.parts"
+
+          "$venv_python" -m boilr_generator.cli --help
+
+          "$venv_python" -c "from boilr_generator.modules.registry import ModuleRegistry; from boilr_generator.paths import get_builtin_modules_path; registry=ModuleRegistry(get_builtin_modules_path()); required={'django','postgres','redis','django-postgres','django-redis'}; available=set(registry.list_keys()); missing=sorted(required-available); print('Modules installés :', sorted(available)); assert not missing, missing"
+
+          "$venv_python" -m boilr_generator.cli generate \
+            "$package_root/tests/e2e/project.yml" \
+            "$audit_root/generated" \
+            --clean
+
+          "$venv_python" -c "import sys, yaml; from pathlib import Path; root=Path(sys.argv[1]); compose=yaml.safe_load((root/'docker-compose.yml').read_text(encoding='utf-8')); requirements=(root/'backend'/'requirements.txt').read_text(encoding='utf-8'); settings=(root/'backend'/'config'/'settings'/'base.py').read_text(encoding='utf-8'); assert set(compose['services']) == {'backend','db','redis'}; assert 'django-redis>=7.0,<8.0' in requirements; assert 'django_redis.cache.RedisCache' in settings; print('Projet généré depuis le wheel installé : valide.')" \
+            "$audit_root/generated"
