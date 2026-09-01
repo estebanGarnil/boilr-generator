@@ -131,6 +131,7 @@ class ProjectGenerator:
 
         files.append(
             self._plan_generated_file(
+                resource_id="core:docker-compose",
                 relative_path="docker-compose.yml",
                 output_path=output_path,
                 content=self._serialize_yaml(
@@ -140,6 +141,7 @@ class ProjectGenerator:
         )
         files.append(
             self._plan_generated_file(
+                resource_id="core:environment",
                 relative_path=".env",
                 output_path=output_path,
                 content=self._serialize_env(env),
@@ -761,6 +763,7 @@ class ProjectGenerator:
 
     def _plan_generated_file(
         self,
+        resource_id: str,
         relative_path: str,
         output_path: Path,
         content: bytes,
@@ -771,6 +774,10 @@ class ProjectGenerator:
             source_path=None,
             destination_path=destination_path,
             output_path=output_path,
+            resource_id=resource_id,
+            default_relative_path=(
+                PurePosixPath(relative_path).as_posix()
+            ),
             operation="generate",
             module=None,
             strategy="overwrite",
@@ -820,6 +827,12 @@ class ProjectGenerator:
             source_path=source_path,
             destination_path=destination_path,
             output_path=output_path,
+            resource_id=(
+                f"module:{module_key}:render:{source.id}"
+            ),
+            default_relative_path=(
+                PurePosixPath(source.to).as_posix()
+            ),
             operation="render",
             module=module_key,
             strategy="overwrite",
@@ -876,13 +889,16 @@ class ProjectGenerator:
                 ),
             )
 
-        source_files: list[tuple[Path, Path]] = []
+        source_files: list[
+            tuple[Path, Path, str | None]
+        ] = []
 
         if source_path.is_file():
             source_files.append(
                 (
                     source_path,
                     destination_root,
+                    None,
                 )
             )
         else:
@@ -922,6 +938,7 @@ class ProjectGenerator:
                     (
                         file_path,
                         destination_path,
+                        relative_source_path.as_posix(),
                     )
                 )
 
@@ -969,18 +986,42 @@ class ProjectGenerator:
 
         planned_files: list[PlannedFile] = []
 
-        for file_path, destination_path in source_files:
+        for (
+            file_path,
+            destination_path,
+            relative_source_path,
+        ) in source_files:
             content, mode = self._read_copy_source(
                 path=file_path,
                 module_key=module_key,
                 field_path=field_path,
             )
 
+            resource_id = (
+                f"module:{module_key}:copy:{source.id}"
+            )
+            default_relative_path = PurePosixPath(
+                source.to
+            )
+
+            if relative_source_path is not None:
+                resource_id = (
+                    f"{resource_id}:"
+                    f"{relative_source_path}"
+                )
+                default_relative_path /= PurePosixPath(
+                    relative_source_path
+                )
+
             planned_files.append(
                 self._build_planned_file(
                     source_path=file_path,
                     destination_path=destination_path,
                     output_path=output_path,
+                    resource_id=resource_id,
+                    default_relative_path=(
+                        default_relative_path.as_posix()
+                    ),
                     operation="copy",
                     module=module_key,
                     strategy=source.strategy,
@@ -1162,6 +1203,8 @@ class ProjectGenerator:
         source_path: Path | None,
         destination_path: Path,
         output_path: Path,
+        resource_id: str,
+        default_relative_path: str,
         operation: str,
         module: str | None,
         strategy: str,
@@ -1191,6 +1234,8 @@ class ProjectGenerator:
             source_path=source_path,
             destination_path=destination_path,
             relative_destination_path=relative_destination_path,
+            resource_id=resource_id,
+            default_relative_path=default_relative_path,
             operation=operation,
             action=action,
             module=module,

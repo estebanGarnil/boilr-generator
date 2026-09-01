@@ -60,6 +60,10 @@ def test_generation_plan_serializes_filesystem_contract(
                 relative_destination_path=(
                     "nested/generated.txt"
                 ),
+                resource_id="module:django:render:generated",
+                default_relative_path=(
+                    "nested/generated.txt"
+                ),
                 operation="generate",
                 action="create",
                 content=planned_content,
@@ -122,6 +126,12 @@ def test_generation_plan_serializes_filesystem_contract(
     assert serialized_file["destination_path"] == str(
         destination_path
     )
+    assert serialized_file["resource_id"] == (
+        "module:django:render:generated"
+    )
+    assert serialized_file["default_relative_path"] == (
+        "nested/generated.txt"
+    )
     assert serialized_file["content_size"] == len(
         planned_content
     )
@@ -152,6 +162,8 @@ def test_generation_plan_summary_counts_contract_operations(
             source_path=None,
             destination_path=output_path / "create.txt",
             relative_destination_path="create.txt",
+            resource_id="core:create-test",
+            default_relative_path="create.txt",
             operation="generate",
             action="create",
             content=b"a",
@@ -160,6 +172,8 @@ def test_generation_plan_summary_counts_contract_operations(
             source_path=None,
             destination_path=output_path / "overwrite.txt",
             relative_destination_path="overwrite.txt",
+            resource_id="core:overwrite-test",
+            default_relative_path="overwrite.txt",
             operation="generate",
             action="overwrite",
             content=b"bb",
@@ -168,6 +182,8 @@ def test_generation_plan_summary_counts_contract_operations(
             source_path=None,
             destination_path=output_path / "skip.txt",
             relative_destination_path="skip.txt",
+            resource_id="core:skip-test",
+            default_relative_path="skip.txt",
             operation="copy",
             action="skip",
             content=b"ccc",

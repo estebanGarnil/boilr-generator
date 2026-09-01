@@ -1594,6 +1594,8 @@ def test_execute_rejects_unsafe_file_destination(
                 source_path=None,
                 destination_path=outside_file,
                 relative_destination_path="../outside.txt",
+                resource_id="core:test-unsafe-destination",
+                default_relative_path="outside.txt",
                 operation="generate",
                 action="create",
                 content=b"unsafe",
@@ -2110,6 +2112,12 @@ def test_execute_wraps_parent_directory_creation_error(
                 relative_destination_path=(
                     "nested/generated.txt"
                 ),
+                resource_id=(
+                    "core:test-parent-directory"
+                ),
+                default_relative_path=(
+                    "nested/generated.txt"
+                ),
                 operation="generate",
                 action="create",
                 content=b"content",
@@ -2171,6 +2179,8 @@ def test_execute_wraps_file_write_error(
                 source_path=None,
                 destination_path=destination_path,
                 relative_destination_path="generated.txt",
+                resource_id="core:test-file-write",
+                default_relative_path="generated.txt",
                 operation="generate",
                 action="create",
                 content=b"content",
@@ -2227,6 +2237,8 @@ def test_execute_wraps_file_mode_error(
                 source_path=None,
                 destination_path=destination_path,
                 relative_destination_path="generated.txt",
+                resource_id="core:test-file-mode",
+                default_relative_path="generated.txt",
                 operation="generate",
                 action="create",
                 content=b"content",

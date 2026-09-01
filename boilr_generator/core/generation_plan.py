@@ -43,6 +43,8 @@ class PlannedFile:
     source_path: Path | None
     destination_path: Path
     relative_destination_path: str
+    resource_id: str
+    default_relative_path: str
     operation: str
     action: str
     content: bytes = field(repr=False)
