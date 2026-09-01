@@ -115,25 +115,31 @@ assembly:
 
 sources:
   copy:
-    - from: files/apps
+    - id: apps
+      from: files/apps
       to: backend/apps
       strategy: merge
 
-    - from: files/config
+    - id: config
+      from: files/config
       to: backend/config
       strategy: merge
 
   render:
-    - from: files/templates/manage.py.j2
+    - id: manage
+      from: files/templates/manage.py.j2
       to: backend/manage.py
 
-    - from: files/templates/Dockerfile.j2
+    - id: dockerfile
+      from: files/templates/Dockerfile.j2
       to: backend/Dockerfile
 
-    - from: files/templates/requirements.txt.j2
+    - id: requirements
+      from: files/templates/requirements.txt.j2
       to: backend/requirements.txt
 
-    - from: files/templates/settings_base.py.j2
+    - id: settings-base
+      from: files/templates/settings_base.py.j2
       to: backend/config/settings/base.py
 
 docker:

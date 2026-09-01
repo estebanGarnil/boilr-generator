@@ -220,9 +220,15 @@ class AssemblyConfig(BaseModel):
     destination_root: str
 
 
+SOURCE_ID_PATTERN = r"^[a-z][a-z0-9-]*$"
 class CopySource(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    id: str = Field(
+        min_length=1,
+        strict=True,
+        pattern=SOURCE_ID_PATTERN,
+    )
     from_: str = Field(alias="from")
     to: str
     strategy: Literal[
@@ -235,15 +241,43 @@ class CopySource(BaseModel):
 class RenderSource(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    id: str = Field(
+        min_length=1,
+        strict=True,
+        pattern=SOURCE_ID_PATTERN,
+    )
     from_: str = Field(alias="from")
     to: str
 
 class ModuleSources(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    copy_sources: list[CopySource] = Field(default_factory=list, alias="copy")
-    render: list[RenderSource] = Field(default_factory=list)
+    copy_sources: list[CopySource] = Field(
+        default_factory=list,
+        alias="copy",
+    )
+    render: list[RenderSource] = Field(
+        default_factory=list
+    )
 
+    @model_validator(mode="after")
+    def validate_unique_source_ids(
+        self,
+    ) -> "ModuleSources":
+        source_ids = [
+            source.id
+            for source in [
+                *self.copy_sources,
+                *self.render,
+            ]
+        ]
+
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError(
+                "Duplicate source identifiers are not allowed."
+            )
+
+        return self
 
 # --- DOCKER / EXPORTS ---
 

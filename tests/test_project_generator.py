@@ -527,6 +527,7 @@ def test_project_generator_failed_plan_does_not_modify_output(
     postgres.manifest.sources.render = [
         RenderSource.model_validate(
             {
+                "id": "missing-template",
                 "from": "missing-template.j2",
                 "to": "generated.txt",
             }
@@ -651,6 +652,7 @@ def test_project_generator_plan_reports_missing_template(
     postgres.manifest.sources.render = [
         RenderSource.model_validate(
             {
+                "id": "missing-plan-template",
                 "from": "missing-plan-template.j2",
                 "to": "generated.txt",
             }
@@ -695,6 +697,7 @@ def test_project_generator_plan_reports_missing_copy_source(
     postgres.manifest.sources.copy_sources = [
         CopySource.model_validate(
             {
+                "id": "missing-copy-source",
                 "from": "missing-copy-source",
                 "to": "generated",
             }
@@ -1190,6 +1193,7 @@ def test_copy_strategy_skip_skips_existing_tree(
         module_path=tmp_path / "module",
         source=CopySource.model_validate(
             {
+                "id": "skip-source",
                 "from": "source",
                 "to": "target",
                 "strategy": "skip",
@@ -1240,6 +1244,7 @@ def test_copy_strategy_replace_plans_removal(
         module_path=tmp_path / "module",
         source=CopySource.model_validate(
             {
+                "id": "replace-plan-source",
                 "from": "source",
                 "to": "target",
                 "strategy": "replace",
@@ -1327,6 +1332,7 @@ def test_copy_strategy_replace_executes_removal(
         module_path=tmp_path / "module",
         source=CopySource.model_validate(
             {
+                "id": "replace-execute-source",
                 "from": "source",
                 "to": "target",
                 "strategy": "replace",
@@ -1432,6 +1438,7 @@ def test_copy_source_cannot_escape_module_directory(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unsafe-copy-source",
                     "from": "../outside.txt",
                     "to": "generated.txt",
                 }
@@ -1472,6 +1479,7 @@ def test_render_source_cannot_escape_module_directory(
             module_path=module_path,
             source=RenderSource.model_validate(
                 {
+                    "id": "unsafe-render-source",
                     "from": "../outside.j2",
                     "to": "generated.txt",
                 }
@@ -1507,6 +1515,7 @@ def test_copy_destination_cannot_escape_output_directory(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unsafe-copy-destination",
                     "from": "source.txt",
                     "to": "../outside.txt",
                 }
@@ -1546,6 +1555,7 @@ def test_render_destination_cannot_be_absolute(
             module_path=module_path,
             source=RenderSource.model_validate(
                 {
+                    "id": "unsafe-render-destination",
                     "from": "template.j2",
                     "to": str(outside_file),
                 }
@@ -1896,6 +1906,7 @@ def test_copy_source_wraps_file_read_error(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unreadable-file-source",
                     "from": "source.txt",
                     "to": "generated.txt",
                 }
@@ -1949,6 +1960,7 @@ def test_copy_source_wraps_directory_listing_error(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unreadable-directory-source",
                     "from": "source",
                     "to": "generated",
                 }
