@@ -137,12 +137,25 @@ sources:
     - id: requirements
       from: files/templates/requirements.txt.j2
       to: backend/requirements.txt
+      uses:
+        extension_points:
+          - python.dependencies
 
     - id: settings-base
       from: files/templates/settings_base.py.j2
       to: backend/config/settings/base.py
+      uses:
+        bindings:
+          - primary_database
+        extension_points:
+          - database.backend
+          - django.settings
 
 docker:
+  uses:
+    bindings:
+      - primary_database
+
   services:
     backend:
       build:
@@ -169,6 +182,10 @@ docker:
         - .env
 
 exports:
+  uses:
+    bindings:
+      - primary_database
+
   env:
     DJANGO_SETTINGS_MODULE: "{{ django_settings_module }}"
     DJANGO_SECRET_KEY: "{{ secret_key }}"

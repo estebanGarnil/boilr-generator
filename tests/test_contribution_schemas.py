@@ -25,12 +25,10 @@ def test_manifest_loads_extension_points_and_contributions(
         "django",
     )
 
-    data["extension_points"] = {
-        "python.dependencies": {
-            "type": "list",
-            "merge": "append_unique",
-            "default": [],
-        }
+    data["extension_points"]["python.dependencies"] = {
+        "type": "list",
+        "merge": "append_unique",
+        "default": [],
     }
 
     data["contributions"] = [
