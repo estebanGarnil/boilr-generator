@@ -49,7 +49,22 @@ class PlannedFile:
     action: str
     content: bytes = field(repr=False)
     module: str | None = None
+    contributors: list[str] = field(default_factory=list)
     mode: int | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize deterministic ownership provenance."""
+        contributors = set(self.contributors)
+
+        if self.module is not None:
+            contributors.add(self.module)
+
+        self.contributors = sorted(contributors)
+
+    @property
+    def owner(self) -> str | None:
+        """Return the module that declares this resource."""
+        return self.module
 
     @property
     def content_size(self) -> int:

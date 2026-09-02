@@ -1462,6 +1462,7 @@ def test_copy_source_cannot_escape_module_directory(
 
 def test_render_source_cannot_escape_module_directory(
     registry,
+    resolved_project,
     tmp_path,
 ):
     module_path = tmp_path / "module"
@@ -1475,6 +1476,7 @@ def test_render_source_cannot_escape_module_directory(
 
     with pytest.raises(UnsafePathError) as error_info:
         generator._plan_render_source(
+            resolved_project=resolved_project,
             module_key="example",
             module_path=module_path,
             source=RenderSource.model_validate(
@@ -1537,6 +1539,7 @@ def test_copy_destination_cannot_escape_output_directory(
 
 def test_render_destination_cannot_be_absolute(
     registry,
+    resolved_project,
     tmp_path,
 ):
     module_path = tmp_path / "module"
@@ -1551,6 +1554,7 @@ def test_render_destination_cannot_be_absolute(
 
     with pytest.raises(UnsafePathError) as error_info:
         generator._plan_render_source(
+            resolved_project=resolved_project,
             module_key="example",
             module_path=module_path,
             source=RenderSource.model_validate(
@@ -1639,6 +1643,7 @@ def test_source_symbolic_link_cannot_escape_module(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unsafe-copy-symlink",
                     "from": "linked.txt",
                     "to": "generated.txt",
                 }
@@ -1653,6 +1658,7 @@ def test_source_symbolic_link_cannot_escape_module(
 
 def test_destination_symbolic_link_cannot_escape_output(
     registry,
+    resolved_project,
     tmp_path,
 ):
     module_path = tmp_path / "module"
@@ -1680,10 +1686,12 @@ def test_destination_symbolic_link_cannot_escape_output(
 
     with pytest.raises(UnsafePathError):
         generator._plan_render_source(
+            resolved_project=resolved_project,
             module_key="example",
             module_path=module_path,
             source=RenderSource.model_validate(
                 {
+                    "id": "unsafe-render-symlink",
                     "from": "template.j2",
                     "to": "linked/generated.txt",
                 }

@@ -1,7 +1,7 @@
 """Project generation planning and execution."""
 
 from pathlib import Path, PurePosixPath
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 
 import yaml
 
@@ -13,6 +13,7 @@ from boilr_generator.core.generation_plan import (
     PlannedRemoval,
     RemovalReason,
 )
+from boilr_generator.core.project import ResolvedProject
 from boilr_generator.exceptions import (
     FileConflictError,
     OutputDirectoryError,
@@ -33,7 +34,11 @@ from boilr_generator.generation.filesystem import (
 )
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
-from boilr_generator.modules.schemas import CopySource, RenderSource
+from boilr_generator.modules.schemas import (
+    CopySource,
+    RenderSource,
+    ResourceInputs,
+)
 from boilr_generator.resolver import Resolver
 
 
@@ -112,6 +117,7 @@ class ProjectGenerator:
             ):
                 files.append(
                     self._plan_render_source(
+                        resolved_project=resolved_project,
                         module_key=module_key,
                         module_path=module_path,
                         source=source,
@@ -134,6 +140,12 @@ class ProjectGenerator:
                 resource_id="core:docker-compose",
                 relative_path="docker-compose.yml",
                 output_path=output_path,
+                contributors=(
+                    self._core_resource_contributors(
+                        resolved_project,
+                        resource="docker",
+                    )
+                ),
                 content=self._serialize_yaml(
                     docker_compose
                 ),
@@ -144,6 +156,12 @@ class ProjectGenerator:
                 resource_id="core:environment",
                 relative_path=".env",
                 output_path=output_path,
+                contributors=(
+                    self._core_resource_contributors(
+                        resolved_project,
+                        resource="environment",
+                    )
+                ),
                 content=self._serialize_env(env),
             )
         )
@@ -761,11 +779,87 @@ class ProjectGenerator:
 
         return content.encode("utf-8")
 
+    def _contributors_for_inputs(
+        self,
+        project: ResolvedProject,
+        *,
+        owner: str,
+        inputs: ResourceInputs,
+    ) -> list[str]:
+        """Resolve modules that influence one generated resource."""
+        contributors = {owner}
+        used_bindings = set(inputs.bindings)
+
+        contributors.update(
+            binding.provider_module_key
+            for binding in project.bindings_for_consumer(owner)
+            if binding.binding_key in used_bindings
+        )
+
+        for extension_point in inputs.extension_points:
+            value = project.extension_value_for(
+                owner,
+                extension_point,
+            )
+
+            if value is not None:
+                contributors.update(
+                    value.contributor_module_keys
+                )
+
+        return sorted(contributors)
+
+    def _core_resource_contributors(
+        self,
+        project: ResolvedProject,
+        *,
+        resource: Literal[
+            "docker",
+            "environment",
+        ],
+    ) -> list[str]:
+        """Resolve contributors to one core aggregate resource."""
+        contributors: set[str] = set()
+
+        for module in project.ordered_modules():
+            if resource == "docker":
+                docker = module.manifest.docker
+
+                if docker is None or not (
+                    docker.services
+                    or docker.volumes
+                ):
+                    continue
+
+                inputs = docker.uses
+            else:
+                exports = module.manifest.exports
+
+                if (
+                    exports is None
+                    or exports.env is None
+                    or not exports.env.root
+                ):
+                    continue
+
+                inputs = exports.uses
+
+            contributors.update(
+                self._contributors_for_inputs(
+                    project,
+                    owner=module.key,
+                    inputs=inputs,
+                )
+            )
+
+        return sorted(contributors)
+
     def _plan_generated_file(
         self,
         resource_id: str,
         relative_path: str,
         output_path: Path,
+        contributors: list[str],
         content: bytes,
     ) -> PlannedFile:
         destination_path = output_path / relative_path
@@ -780,12 +874,14 @@ class ProjectGenerator:
             ),
             operation="generate",
             module=None,
+            contributors=contributors,
             strategy="overwrite",
             content=content,
         )
 
     def _plan_render_source(
         self,
+        resolved_project: ResolvedProject,
         module_key: str,
         module_path: Path,
         source: RenderSource,
@@ -835,6 +931,13 @@ class ProjectGenerator:
             ),
             operation="render",
             module=module_key,
+            contributors=(
+                self._contributors_for_inputs(
+                    resolved_project,
+                    owner=module_key,
+                    inputs=source.uses,
+                )
+            ),
             strategy="overwrite",
             content=rendered_content.encode("utf-8"),
         )
@@ -1024,6 +1127,7 @@ class ProjectGenerator:
                     ),
                     operation="copy",
                     module=module_key,
+                    contributors=[module_key],
                     strategy=source.strategy,
                     content=content,
                     mode=mode,
@@ -1207,6 +1311,7 @@ class ProjectGenerator:
         default_relative_path: str,
         operation: str,
         module: str | None,
+        contributors: list[str],
         strategy: str,
         content: bytes,
         mode: int | None = None,
@@ -1239,6 +1344,7 @@ class ProjectGenerator:
             operation=operation,
             action=action,
             module=module,
+            contributors=contributors,
             content=content,
             mode=mode,
         )
