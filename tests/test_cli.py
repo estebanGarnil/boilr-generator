@@ -110,7 +110,6 @@ def test_dry_run_clean_json_is_exhaustive_and_immutable(
         removal["relative_path"]
         for removal in data["removals"]
     } == {
-        ".",
         "existing.txt",
     }
     assert all(
@@ -121,14 +120,14 @@ def test_dry_run_clean_json_is_exhaustive_and_immutable(
         removal["kind"]
         for removal in data["removals"]
     } == {
-        "directory",
         "file",
     }
 
     assert data["directories"]
-    assert data["directories"][0][
-        "relative_path"
-    ] == "."
+    assert "." not in {
+        directory["relative_path"]
+        for directory in data["directories"]
+    }
 
     assert data["initial_output_state"]
     assert data["summary"][
@@ -193,6 +192,11 @@ def test_dry_run_info_displays_filesystem_operations(
     existing_file = output_path / "existing.txt"
     existing_file.write_bytes(b"keep")
 
+    existing_directory = (
+        output_path / "existing-directory"
+    )
+    existing_directory.mkdir()
+
     generator = cli.ProjectGenerator(registry)
 
     monkeypatch.setattr(
@@ -226,6 +230,7 @@ def test_dry_run_info_displays_filesystem_operations(
     assert "Remove file" in result.output
     assert "existing.txt" in result.output
     assert "Remove directory" in result.output
+    assert "existing-directory" in result.output
     assert "Create directory" in result.output
     assert "Directories" in result.output
     assert "Removals" in result.output

@@ -1063,7 +1063,6 @@ def test_project_generator_clean_plan_contains_exact_removals(
         "empty",
         "nested",
         "root.txt",
-        ".",
     ]
 
     assert [
@@ -1074,7 +1073,6 @@ def test_project_generator_clean_plan_contains_exact_removals(
         "directory",
         "directory",
         "file",
-        "directory",
     ]
 
     assert all(
@@ -1088,10 +1086,10 @@ def test_project_generator_clean_plan_contains_exact_removals(
 
     data = plan.to_dict()
 
-    assert data["summary"]["removals_count"] == 5
+    assert data["summary"]["removals_count"] == 4
     assert (
         data["summary"]["clean_removals_count"]
-        == 5
+        == 4
     )
     assert (
         data["summary"]["replace_removals_count"]
@@ -1103,7 +1101,7 @@ def test_project_generator_clean_plan_contains_exact_removals(
         for directory in plan.directories
     }
 
-    assert output_path in planned_directory_paths
+    assert output_path not in planned_directory_paths
     assert empty_directory not in planned_directory_paths
     assert nested_directory not in planned_directory_paths
 

@@ -32,6 +32,7 @@ from boilr_generator.generation.files import FileGenerator
 from boilr_generator.generation.filesystem import (
     capture_output_state,
     find_changed_output_paths,
+    is_reserved_state_path,
 )
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
@@ -42,6 +43,9 @@ from boilr_generator.modules.schemas import (
 )
 from boilr_generator.resolver import Resolver
 from boilr_generator.state import build_initial_project_state
+from boilr_generator.state.storage import (
+    STATE_DIRECTORY_NAME,
+)
 
 
 class ProjectGenerator:
@@ -213,7 +217,10 @@ class ProjectGenerator:
         existing_states = [
             state
             for state in states
-            if state.exists
+            if (
+                state.exists
+                and state.relative_path != "."
+            )
         ]
 
         ordered_states = sorted(
@@ -1248,6 +1255,14 @@ class ProjectGenerator:
         allow_root: bool,
     ) -> str:
         """Validate lexical paths and resolved symbolic links."""
+
+        try:
+            lexical_relative_path = path.relative_to(
+                allowed_root
+            )
+        except ValueError:
+            lexical_relative_path = None
+
         resolved_root = allowed_root.resolve()
         resolved_path = path.resolve()
 
@@ -1288,6 +1303,50 @@ class ProjectGenerator:
                 suggestion=(
                     f"Choose a {path_kind} path located inside "
                     f"the {root_description}."
+                ),
+            )
+
+        if (
+            path_kind in {"destination", "removal"}
+            and (
+                (
+                    lexical_relative_path is not None
+                    and is_reserved_state_path(
+                        lexical_relative_path
+                    )
+                )
+                or is_reserved_state_path(
+                    relative_path
+                )
+            )
+        ):
+            raise UnsafePathError(
+                (
+                    "Reserved Boilr state path cannot be "
+                    f"used as a {path_kind}: '{path}'."
+                ),
+                module_key=module_key,
+                field_path=field_path,
+                context={
+                    "reason": "reserved_state_path",
+                    "path_kind": path_kind,
+                    f"{path_kind}_path": str(path),
+                    "resolved_path": str(
+                        resolved_path
+                    ),
+                    "allowed_root": str(
+                        resolved_root
+                    ),
+                    "relative_path": (
+                        relative_path.as_posix()
+                    ),
+                    "reserved_root": (
+                        STATE_DIRECTORY_NAME
+                    ),
+                },
+                suggestion=(
+                    "Choose a path outside the reserved "
+                    f"'{STATE_DIRECTORY_NAME}' directory."
                 ),
             )
 

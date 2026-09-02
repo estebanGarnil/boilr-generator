@@ -477,7 +477,9 @@ def test_existing_output_matches_clean_plan(
     assert {
         removal.relative_path
         for removal in plan.removals
-    } == set(initial_state)
+    } == (
+        set(initial_state) - {"."}
+    )
     assert snapshot_filesystem(
         output_path
     ) == initial_state
