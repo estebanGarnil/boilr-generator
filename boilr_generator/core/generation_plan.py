@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from boilr_generator.core.project import ResolvedProject
+from boilr_generator.state.schemas import ProjectState
 
 PathKind = Literal[
     "file",
@@ -121,6 +122,7 @@ class GenerationPlan:
         default_factory=list
     )
     clean_output: bool = False
+    desired_state: ProjectState | None = None
 
     @property
     def files_to_create(self) -> list[PlannedFile]:
@@ -207,6 +209,11 @@ class GenerationPlan:
                 self.resolved_project.list_module_keys()
             ),
         }
+        data["desired_state"] = (
+            self.desired_state.model_dump(mode="json")
+            if self.desired_state is not None
+            else None
+        )
 
         for path_state in data["initial_output_state"]:
             path_state["path"] = str(

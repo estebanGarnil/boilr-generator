@@ -1,5 +1,6 @@
 """Project generation planning and execution."""
 
+from importlib.metadata import version
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, NoReturn
 
@@ -40,6 +41,7 @@ from boilr_generator.modules.schemas import (
     ResourceInputs,
 )
 from boilr_generator.resolver import Resolver
+from boilr_generator.state import build_initial_project_state
 
 
 class ProjectGenerator:
@@ -178,6 +180,12 @@ class ProjectGenerator:
             removals=removals,
             files=files,
         )
+        desired_state = build_initial_project_state(
+            manifest=manifest,
+            resolved_project=resolved_project,
+            files=files,
+            generator_version=version("boilr"),
+        )
 
         return GenerationPlan(
             resolved_project=resolved_project,
@@ -191,6 +199,7 @@ class ProjectGenerator:
             env_variables=list(env.keys()),
             clean_output=clean,
             removals=removals,
+            desired_state=desired_state,
         )
 
     def _plan_removals_from_state(
