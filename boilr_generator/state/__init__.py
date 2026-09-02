@@ -1,7 +1,12 @@
-"""Persistent generated-project state API."""
+"""Public project-state API."""
 
 from boilr_generator.state.builder import (
     build_initial_project_state,
+)
+from boilr_generator.state.observation import (
+    ProjectObservation,
+    TrackedResourceObservation,
+    classify_tracked_resources,
 )
 from boilr_generator.state.schemas import (
     ProjectState,
@@ -20,13 +25,16 @@ from boilr_generator.state.storage import (
 )
 
 __all__ = [
+    "ProjectObservation",
     "ProjectState",
     "ProjectStateStorage",
     "StateBinding",
     "StateModule",
     "StateProject",
     "StateResource",
+    "TrackedResourceObservation",
     "build_initial_project_state",
+    "classify_tracked_resources",
     "deserialize_project_state",
     "fingerprint_model",
     "serialize_project_state",

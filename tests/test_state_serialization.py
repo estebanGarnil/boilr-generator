@@ -84,13 +84,16 @@ def _manifest(content: str) -> ProjectManifest:
 
 def test_state_public_api_exports_serialization_helpers():
     assert state_api.__all__ == [
+        "ProjectObservation",
         "ProjectState",
         "ProjectStateStorage",
         "StateBinding",
         "StateModule",
         "StateProject",
         "StateResource",
+        "TrackedResourceObservation",
         "build_initial_project_state",
+        "classify_tracked_resources",
         "deserialize_project_state",
         "fingerprint_model",
         "serialize_project_state",
