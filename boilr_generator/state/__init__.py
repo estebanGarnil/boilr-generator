@@ -15,9 +15,13 @@ from boilr_generator.state.serialization import (
     fingerprint_model,
     serialize_project_state,
 )
+from boilr_generator.state.storage import (
+    ProjectStateStorage,
+)
 
 __all__ = [
     "ProjectState",
+    "ProjectStateStorage",
     "StateBinding",
     "StateModule",
     "StateProject",

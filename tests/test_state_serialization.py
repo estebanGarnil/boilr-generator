@@ -85,6 +85,7 @@ def _manifest(content: str) -> ProjectManifest:
 def test_state_public_api_exports_serialization_helpers():
     assert state_api.__all__ == [
         "ProjectState",
+        "ProjectStateStorage",
         "StateBinding",
         "StateModule",
         "StateProject",
@@ -96,6 +97,7 @@ def test_state_public_api_exports_serialization_helpers():
     ]
 
 
+
 def test_serialize_project_state_is_deterministic():
     state = _project_state()
 
@@ -105,6 +107,7 @@ def test_serialize_project_state_is_deterministic():
     assert first == second
     assert first.endswith(b"\n")
     assert b"\r" not in first
+
 
 
 def test_serialize_project_state_uses_readable_utf8():
@@ -247,4 +250,16 @@ modules:
         manifest_a
     ) != fingerprint_model(
         manifest_b
+    )
+
+def test_state_public_api_exports_storage():
+    import boilr_generator.state as state_package
+
+    from boilr_generator.state.storage import (
+        ProjectStateStorage,
+    )
+
+    assert (
+        state_package.ProjectStateStorage
+        is ProjectStateStorage
     )
