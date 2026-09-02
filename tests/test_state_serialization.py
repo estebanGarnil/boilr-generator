@@ -89,6 +89,7 @@ def test_state_public_api_exports_serialization_helpers():
         "StateModule",
         "StateProject",
         "StateResource",
+        "build_initial_project_state",
         "deserialize_project_state",
         "fingerprint_model",
         "serialize_project_state",
