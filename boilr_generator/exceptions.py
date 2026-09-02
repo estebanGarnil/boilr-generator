@@ -318,6 +318,11 @@ class StaleGenerationPlanError(ExecutionError):
     code = "stale_generation_plan"
 
 
+class StateTransactionError(ExecutionError):
+    """Raised when project state cannot be persisted safely."""
+
+    code = "state_transaction_error"
+
 __all__ = [
     "AmbiguousProviderError",
     "AmbiguousRequirementError",
@@ -356,6 +361,7 @@ __all__ = [
     "SourceNotFoundError",
     "SourceReadError",
     "StaleGenerationPlanError",
+    "StateTransactionError",
     "TemplateRenderError",
     "UnknownExtensionPointError",
     "UnknownOptionError",

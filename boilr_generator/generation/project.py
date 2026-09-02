@@ -22,6 +22,7 @@ from boilr_generator.exceptions import (
     SourceReadError,
     StaleGenerationPlanError,
     UnsafePathError,
+    StateTransactionError,
 )
 from boilr_generator.generation.context import (
     build_module_context,
@@ -42,11 +43,14 @@ from boilr_generator.modules.schemas import (
     ResourceInputs,
 )
 from boilr_generator.resolver import Resolver
-from boilr_generator.state import build_initial_project_state
+from boilr_generator.state import (
+    ProjectState,
+    build_initial_project_state,
+)
 from boilr_generator.state.storage import (
     STATE_DIRECTORY_NAME,
+    ProjectStateStorage,
 )
-
 
 class ProjectGenerator:
     """Plan and execute project generation."""
@@ -529,23 +533,32 @@ class ProjectGenerator:
         self,
         plan: GenerationPlan,
     ) -> None:
-        """Apply exactly the prepared filesystem contract."""
+        """Execute one validated generation plan."""
         output_path = plan.output_path
-        self._validate_initial_output_state(plan)
+        desired_state = plan.desired_state
 
+        state_storage = (
+            ProjectStateStorage(output_path)
+            if desired_state is not None
+            else None
+        )
+
+        self._validate_initial_output_state(plan)
         self._validate_file_conflicts(plan.files)
 
         if plan.clean_output:
-            self._validate_clean_output_path(output_path)
+            self._validate_clean_output_path(
+                output_path
+            )
 
         for directory in plan.directories:
             self._validate_destination_path(
-                path=directory.path,
                 output_path=output_path,
+                path=directory.path,
                 module_key=directory.module,
                 field_path=(
-                    "generation.directories."
-                    f"{directory.relative_path}"
+                    "generation.directories"
+                    f"[{directory.relative_path}]"
                 ),
                 allow_output_root=(
                     directory.reason == "output"
@@ -554,36 +567,213 @@ class ProjectGenerator:
 
         for planned_file in plan.files:
             self._validate_destination_path(
-                path=planned_file.destination_path,
                 output_path=output_path,
+                path=planned_file.destination_path,
                 module_key=planned_file.module,
                 field_path=(
-                    "generation.files."
-                    f"{planned_file.relative_destination_path}"
+                    "generation.files"
+                    f"[{planned_file.relative_destination_path}]"
                 ),
             )
 
         for removal in plan.removals:
             self._validate_removal_path(
-                path=removal.path,
                 output_path=output_path,
+                path=removal.path,
                 module_key=removal.module,
                 allow_output_root=(
                     removal.reason == "clean"
                 ),
             )
 
+        if (
+            state_storage is not None
+            and desired_state is not None
+        ):
+            self._begin_state_transaction(
+                storage=state_storage,
+                state=desired_state,
+            )
+
         for removal in plan.removals:
             self._execute_removal(removal)
 
         for directory in plan.directories:
-            self._create_planned_directory(directory)
+            if (
+                state_storage is not None
+                and directory.path == output_path
+            ):
+                continue
+
+            self._create_planned_directory(
+                directory
+            )
 
         for planned_file in plan.files:
             if planned_file.action == "skip":
                 continue
 
-            self._write_planned_file(planned_file)
+            self._write_planned_file(
+                planned_file
+            )
+
+        if (
+            state_storage is not None
+            and desired_state is not None
+        ):
+            self._commit_state_transaction(
+                storage=state_storage,
+                state=desired_state,
+            )
+
+    @staticmethod
+    def _begin_state_transaction(
+        *,
+        storage: ProjectStateStorage,
+        state: ProjectState,
+    ) -> None:
+        """Write the pending state before filesystem mutations."""
+        try:
+            storage.begin(state)
+        except FileExistsError as error:
+            pending_exists = (
+                storage.pending_state_path.exists()
+                or storage.pending_state_path.is_symlink()
+            )
+
+            if pending_exists:
+                raise StateTransactionError(
+                    (
+                        "A pending project state transaction "
+                        "already exists."
+                    ),
+                    field_path="generation.state",
+                    context={
+                        "reason": "pending_state_exists",
+                        "state_path": str(
+                            storage.state_path
+                        ),
+                        "pending_state_path": str(
+                            storage.pending_state_path
+                        ),
+                    },
+                    suggestion=(
+                        "Inspect and recover the pending "
+                        "transaction before generating again."
+                    ),
+                ) from error
+
+            raise StateTransactionError(
+                "Could not write the pending project state.",
+                field_path="generation.state",
+                context={
+                    "reason": "pending_state_write_failed",
+                    "state_path": str(
+                        storage.state_path
+                    ),
+                    "pending_state_path": str(
+                        storage.pending_state_path
+                    ),
+                    "error_type": type(error).__name__,
+                    "errno": error.errno,
+                },
+                suggestion=(
+                    "Check the output directory permissions "
+                    "and filesystem state."
+                ),
+            ) from error
+        except OSError as error:
+            raise StateTransactionError(
+                "Could not write the pending project state.",
+                field_path="generation.state",
+                context={
+                    "reason": "pending_state_write_failed",
+                    "state_path": str(
+                        storage.state_path
+                    ),
+                    "pending_state_path": str(
+                        storage.pending_state_path
+                    ),
+                    "error_type": type(error).__name__,
+                    "errno": error.errno,
+                },
+                suggestion=(
+                    "Check the output directory permissions "
+                    "and filesystem state."
+                ),
+            ) from error
+
+    @staticmethod
+    def _commit_state_transaction(
+        *,
+        storage: ProjectStateStorage,
+        state: ProjectState,
+    ) -> None:
+        """Atomically promote the pending state."""
+        try:
+            storage.commit(state)
+        except FileNotFoundError as error:
+            raise StateTransactionError(
+                "The pending project state is missing.",
+                field_path="generation.state",
+                context={
+                    "reason": "pending_state_missing",
+                    "state_path": str(
+                        storage.state_path
+                    ),
+                    "pending_state_path": str(
+                        storage.pending_state_path
+                    ),
+                    "error_type": type(error).__name__,
+                    "errno": error.errno,
+                },
+                suggestion=(
+                    "Regenerate the project from a clean "
+                    "transaction."
+                ),
+            ) from error
+        except ValueError as error:
+            raise StateTransactionError(
+                (
+                    "The pending project state does not match "
+                    "the generation plan."
+                ),
+                field_path="generation.state",
+                context={
+                    "reason": "pending_state_mismatch",
+                    "state_path": str(
+                        storage.state_path
+                    ),
+                    "pending_state_path": str(
+                        storage.pending_state_path
+                    ),
+                    "error_type": type(error).__name__,
+                },
+                suggestion=(
+                    "Inspect the pending state before retrying "
+                    "the generation."
+                ),
+            ) from error
+        except OSError as error:
+            raise StateTransactionError(
+                "Could not commit the project state.",
+                field_path="generation.state",
+                context={
+                    "reason": "state_commit_failed",
+                    "state_path": str(
+                        storage.state_path
+                    ),
+                    "pending_state_path": str(
+                        storage.pending_state_path
+                    ),
+                    "error_type": type(error).__name__,
+                    "errno": error.errno,
+                },
+                suggestion=(
+                    "Keep the pending state and resolve the "
+                    "filesystem error before retrying."
+                ),
+            ) from error
 
     @staticmethod
     def _validate_initial_output_state(

@@ -5,6 +5,9 @@ from pathlib import Path, PurePosixPath
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
 )
+from boilr_generator.state.storage import (
+    STATE_DIRECTORY_NAME,
+)
 from boilr_generator.core.project import ResolvedProject
 from boilr_generator.generation import ProjectGenerator
 
@@ -17,6 +20,18 @@ FilesystemSnapshot = dict[
     FilesystemEntry,
 ]
 
+def _is_state_metadata_path(
+    root: Path,
+    path: Path,
+) -> bool:
+    """Return whether a path belongs to root Boilr metadata."""
+    relative_path = path.relative_to(root)
+
+    return (
+        bool(relative_path.parts)
+        and relative_path.parts[0].casefold()
+        == STATE_DIRECTORY_NAME.casefold()
+    )
 
 def snapshot_filesystem(
     root: Path,
@@ -27,7 +42,14 @@ def snapshot_filesystem(
 
     paths = [
         root,
-        *sorted(root.rglob("*")),
+        *[
+            path
+            for path in sorted(root.rglob("*"))
+            if not _is_state_metadata_path(
+                root,
+                path,
+            )
+        ],
     ]
     snapshot: FilesystemSnapshot = {}
 

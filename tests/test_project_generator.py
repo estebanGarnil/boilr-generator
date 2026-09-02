@@ -17,6 +17,7 @@ from boilr_generator.exceptions import (
     SourceReadError,
     StaleGenerationPlanError,
     UnsafePathError,
+    StateTransactionError,
 )
 from boilr_generator.generation import ProjectGenerator
 from boilr_generator.generation.filesystem import (
@@ -25,6 +26,9 @@ from boilr_generator.generation.filesystem import (
 from boilr_generator.modules.schemas import (
     CopySource,
     RenderSource,
+)
+from boilr_generator.state.storage import (
+    STATE_DIRECTORY_NAME,
 )
 
 FilesystemSnapshotEntry = tuple[
@@ -897,6 +901,9 @@ def test_execute_creates_only_planned_directories(
     monkeypatch,
 ):
     output_path = tmp_path / "output"
+    state_directory = (
+        output_path / STATE_DIRECTORY_NAME
+    )
     generator = ProjectGenerator(registry)
 
     plan = generator.plan(
@@ -907,6 +914,7 @@ def test_execute_creates_only_planned_directories(
     expected_paths = [
         directory.path
         for directory in plan.directories
+        if directory.path != output_path
     ]
     mkdir_calls = []
     original_mkdir = Path.mkdir
@@ -933,15 +941,28 @@ def test_execute_creates_only_planned_directories(
 
     generator.execute(plan)
 
+    generation_mkdir_calls = [
+        call
+        for call in mkdir_calls
+        if (
+            call[0] != output_path
+            and call[0] != state_directory
+            and state_directory
+            not in call[0].parents
+        )
+    ]
+
     assert expected_paths
     assert [
         path
-        for path, _, _ in mkdir_calls
+        for path, _, _ in generation_mkdir_calls
     ] == expected_paths
     assert all(
         args == () and kwargs == {}
-        for _, args, kwargs in mkdir_calls
+        for _, args, kwargs
+        in generation_mkdir_calls
     )
+    assert state_directory.is_dir()
 
 
 def test_execute_uses_planned_removal_kinds(
@@ -2061,15 +2082,29 @@ def test_execute_wraps_output_directory_creation_error(
 ):
     output_path = tmp_path / "output"
     generator = ProjectGenerator(registry)
-    plan = generator.plan(manifest, output_path)
+    plan = generator.plan(
+        manifest,
+        output_path,
+    )
 
     original_mkdir = Path.mkdir
 
-    def fail_output_creation(path, *args, **kwargs):
+    def fail_output_creation(
+        path,
+        *args,
+        **kwargs,
+    ):
         if path == output_path:
-            raise PermissionError(13, "Access denied")
+            raise PermissionError(
+                13,
+                "Access denied",
+            )
 
-        return original_mkdir(path, *args, **kwargs)
+        return original_mkdir(
+            path,
+            *args,
+            **kwargs,
+        )
 
     monkeypatch.setattr(
         Path,
@@ -2078,17 +2113,28 @@ def test_execute_wraps_output_directory_creation_error(
     )
 
     with pytest.raises(
-        OutputDirectoryError
+        StateTransactionError
     ) as error_info:
         generator.execute(plan)
 
     error = error_info.value
 
-    assert isinstance(error.__cause__, PermissionError)
-    assert error.context["operation"] == (
-        "create_directory"
+    assert isinstance(
+        error.__cause__,
+        PermissionError,
+    )
+    assert error.context["reason"] == (
+        "pending_state_write_failed"
     )
     assert error.context["errno"] == 13
+    assert (
+        error.context["pending_state_path"]
+        == str(
+            output_path
+            / STATE_DIRECTORY_NAME
+            / "state.pending.json"
+        )
+    )
 
 
 def test_execute_wraps_parent_directory_creation_error(
