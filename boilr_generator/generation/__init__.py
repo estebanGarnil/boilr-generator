@@ -1,3 +1,11 @@
-from boilr_generator.generation.project import ProjectGenerator
+from boilr_generator.generation.observation import (
+    observe_project,
+)
+from boilr_generator.generation.project import (
+    ProjectGenerator,
+)
 
-__all__ = ["ProjectGenerator"]
+__all__ = [
+    "ProjectGenerator",
+    "observe_project",
+]
