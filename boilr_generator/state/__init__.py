@@ -7,6 +7,7 @@ from boilr_generator.state.observation import (
     ProjectObservation,
     TrackedResourceObservation,
     classify_tracked_resources,
+    UntrackedResourceObservation,
 )
 from boilr_generator.state.schemas import (
     ProjectState,
@@ -33,6 +34,7 @@ __all__ = [
     "StateProject",
     "StateResource",
     "TrackedResourceObservation",
+    "UntrackedResourceObservation",
     "build_initial_project_state",
     "classify_tracked_resources",
     "deserialize_project_state",

@@ -18,6 +18,7 @@ from boilr_generator.state import (
     StateResource,
     TrackedResourceObservation,
     classify_tracked_resources,
+    UntrackedResourceObservation,
 )
 
 FINGERPRINT_A = "a" * 64
@@ -177,7 +178,8 @@ def test_classifies_direct_tracked_resource_drift():
                 link_target="second-target",
             ),
             _observed(
-                "user-created.txt"
+                "user-created.txt",
+                fingerprint=FINGERPRINT_B,
             ),
         ],
     )
@@ -212,8 +214,12 @@ def test_classifies_direct_tracked_resource_drift():
         "unchanged": 1,
         "modified": 2,
         "missing": 1,
+        "moved": 0,
+        "move_candidate": 0,
+        "ambiguous_move": 0,
         "type_changed": 1,
         "mode_changed": 1,
+        "untracked": 1,
     }
     assert observation.has_drift is True
 
@@ -232,6 +238,12 @@ def test_classifies_direct_tracked_resource_drift():
         for resource in observation.resources
     )
 
+    assert [
+        resource.path
+        for resource in observation.untracked
+    ] == [
+        "user-created.txt",
+    ]
 
 def test_unspecified_mode_is_not_considered_drift():
     state = _project_state(
@@ -356,8 +368,12 @@ def test_observation_is_deterministic_and_json_compatible():
         "unchanged": 1,
         "modified": 0,
         "missing": 0,
+        "moved": 0,
+        "move_candidate": 0,
+        "ambiguous_move": 0,
         "type_changed": 0,
         "mode_changed": 0,
+        "untracked": 0,
     }
     assert first.has_drift is False
 
@@ -382,3 +398,222 @@ def test_observation_is_deterministic_and_json_compatible():
         state_api.classify_tracked_resources.__module__
         == "boilr_generator.state.observation"
     )
+    assert (
+        state_api.UntrackedResourceObservation.__module__
+        == "boilr_generator.state.observation"
+    )
+
+def test_unique_fingerprint_match_is_move_candidate():
+    state = _project_state(
+        _resource(
+            "module:django:render:settings",
+            "backend/old-settings.py",
+        )
+    )
+
+    observation = classify_tracked_resources(
+        state,
+        [
+            _observed(
+                "backend/new-settings.py",
+                mode=0o600,
+            ),
+            _observed(
+                "user-created.txt",
+                fingerprint=FINGERPRINT_B,
+            ),
+        ],
+    )
+
+    resource = observation.resources[0]
+
+    assert resource.status == "move_candidate"
+    assert resource.materialized_path == (
+        "backend/old-settings.py"
+    )
+    assert resource.observed_path == (
+        "backend/new-settings.py"
+    )
+    assert resource.candidate_paths == (
+        "backend/new-settings.py",
+    )
+    assert resource.expected_mode == 0o644
+    assert resource.observed_mode == 0o600
+
+    assert [
+        untracked.path
+        for untracked in observation.untracked
+    ] == [
+        "user-created.txt",
+    ]
+
+    serialized_resource = (
+        observation.to_dict()["resources"][0]
+    )
+
+    assert serialized_resource[
+        "candidate_paths"
+    ] == [
+        "backend/new-settings.py",
+    ]
+
+
+def test_multiple_matches_are_ambiguous_move():
+    state = _project_state(
+        _resource(
+            "module:django:render:settings",
+            "backend/settings.py",
+        )
+    )
+
+    observation = classify_tracked_resources(
+        state,
+        [
+            _observed(
+                "renamed-z.py"
+            ),
+            _observed(
+                "renamed-a.py"
+            ),
+        ],
+    )
+
+    resource = observation.resources[0]
+
+    assert resource.status == "ambiguous_move"
+    assert resource.observed_path is None
+    assert resource.candidate_paths == (
+        "renamed-a.py",
+        "renamed-z.py",
+    )
+    assert observation.untracked == ()
+    assert observation.summary[
+        "ambiguous_move"
+    ] == 1
+
+
+def test_shared_candidate_is_ambiguous_for_all_resources():
+    state = _project_state(
+        _resource(
+            "module:django:render:first",
+            "backend/first.py",
+        ),
+        _resource(
+            "module:django:render:second",
+            "backend/second.py",
+        ),
+    )
+
+    observation = classify_tracked_resources(
+        state,
+        [
+            _observed(
+                "backend/shared.py"
+            )
+        ],
+    )
+
+    assert {
+        resource.status
+        for resource in observation.resources
+    } == {
+        "ambiguous_move",
+    }
+    assert all(
+        resource.candidate_paths
+        == ("backend/shared.py",)
+        for resource in observation.resources
+    )
+    assert observation.untracked == ()
+
+
+def test_untracked_resources_exclude_container_directories():
+    state = _project_state(
+        _resource(
+            "module:django:render:settings",
+            "backend/settings.py",
+        )
+    )
+
+    observation = classify_tracked_resources(
+        state,
+        [
+            _observed(
+                "backend",
+                kind="directory",
+                mode=0o755,
+            ),
+            _observed(
+                "backend/settings.py"
+            ),
+            _observed(
+                "backend/user.py",
+                fingerprint=FINGERPRINT_B,
+            ),
+            _observed(
+                "backend/notes",
+                kind="directory",
+                mode=0o755,
+            ),
+            _observed(
+                "backend/notes/readme.txt",
+                fingerprint=FINGERPRINT_B,
+            ),
+            _observed(
+                "empty-directory",
+                kind="directory",
+                mode=0o755,
+            ),
+        ],
+    )
+
+    assert observation.resources[0].status == (
+        "unchanged"
+    )
+    assert [
+        resource.path
+        for resource in observation.untracked
+    ] == [
+        "backend/notes/readme.txt",
+        "backend/user.py",
+        "empty-directory",
+    ]
+    assert all(
+        isinstance(
+            resource,
+            UntrackedResourceObservation,
+        )
+        for resource in observation.untracked
+    )
+    assert observation.summary["untracked"] == 3
+    assert observation.has_drift is True
+
+
+def test_nonmatching_path_remains_untracked():
+    state = _project_state(
+        _resource(
+            "module:django:render:settings",
+            "backend/settings.py",
+        )
+    )
+
+    observation = classify_tracked_resources(
+        state,
+        [
+            _observed(
+                "backend/renamed.py",
+                fingerprint=FINGERPRINT_B,
+            )
+        ],
+    )
+
+    tracked = observation.resources[0]
+
+    assert tracked.status == "missing"
+    assert tracked.candidate_paths == ()
+    assert [
+        resource.path
+        for resource in observation.untracked
+    ] == [
+        "backend/renamed.py",
+    ]

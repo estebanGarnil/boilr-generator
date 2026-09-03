@@ -92,6 +92,7 @@ def test_state_public_api_exports_serialization_helpers():
         "StateProject",
         "StateResource",
         "TrackedResourceObservation",
+        "UntrackedResourceObservation",
         "build_initial_project_state",
         "classify_tracked_resources",
         "deserialize_project_state",
