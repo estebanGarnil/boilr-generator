@@ -15,9 +15,13 @@ from rich.tree import Tree
 from boilr_generator.exceptions import BoilrError
 from boilr_generator.generation import (
     ProjectGenerator,
+    apply_reconciliation_plan,
     observe_project,
 )
-from boilr_generator.state import ProjectStateStorage
+from boilr_generator.state import (
+    ProjectStateStorage,
+    build_reconciliation_plan,
+)
 from boilr_generator.manifest import load_project_manifest_from_yaml
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.paths import get_builtin_modules_path
@@ -592,6 +596,169 @@ def render_project_status(
         "Resource drift",
     )
 
+def _parse_accepted_moves(
+    values: list[str],
+) -> dict[str, str]:
+    """Parse repeated RESOURCE_ID=PATH move selections."""
+    accepted_moves: dict[str, str] = {}
+
+    for value in values:
+        if "=" not in value:
+            raise ValueError(
+                "Accepted moves must use RESOURCE_ID=PATH."
+            )
+
+        resource_id, path = (
+            part.strip()
+            for part in value.split("=", 1)
+        )
+
+        if not resource_id or not path:
+            raise ValueError(
+                "Accepted moves require a resource identifier "
+                "and a destination path."
+            )
+
+        if resource_id in accepted_moves:
+            raise ValueError(
+                "A resource move may be accepted only once: "
+                f"'{resource_id}'."
+            )
+
+        accepted_moves[resource_id] = path
+
+    return accepted_moves
+
+
+def render_reconciliation_error(
+    error_data: dict,
+    *,
+    json_output: bool,
+) -> None:
+    """Render one invalid reconciliation request."""
+    if json_output:
+        console.print_json(data=error_data)
+        return
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold red")
+    table.add_column()
+
+    table.add_row(
+        "Message",
+        escape(error_data["message"]),
+    )
+    table.add_row(
+        "Code",
+        escape(error_data["code"]),
+    )
+    table.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                error_data["output_path"]
+            )
+        ),
+    )
+    table.add_row(
+        "Suggestion",
+        escape(error_data["suggestion"]),
+    )
+
+    render_section(
+        table,
+        "Boilr reconciliation error",
+        border_style="red",
+    )
+
+
+def render_reconciliation_result(
+    result_data: dict,
+) -> None:
+    """Render one reconciliation result for humans."""
+    plan = result_data["plan"]
+    moves = plan["moves"]
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_column(style="bold")
+    overview.add_column()
+
+    overview.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                result_data["output_path"]
+            )
+        ),
+    )
+    overview.add_row(
+        "Dry run",
+        (
+            "[yellow]Yes[/yellow]"
+            if result_data["dry_run"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "Accepted moves",
+        str(plan["summary"]["moves_count"]),
+    )
+    overview.add_row(
+        "State updated",
+        (
+            "[green]Yes[/green]"
+            if result_data["applied"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "State",
+        escape(
+            shorten_path(
+                result_data["state_path"]
+            )
+        ),
+    )
+
+    render_section(
+        overview,
+        "Boilr project reconciliation",
+        border_style=(
+            "cyan"
+            if result_data["dry_run"]
+            else "green"
+        ),
+    )
+
+    details = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    details.add_column("Resource")
+    details.add_column("Detected as")
+    details.add_column("Previous path")
+    details.add_column("Accepted path")
+
+    if not moves:
+        details.add_row(
+            "-",
+            "No accepted moves",
+            "-",
+            "-",
+        )
+
+    for move in moves:
+        details.add_row(
+            escape(move["resource_id"]),
+            escape(move["detected_as"]),
+            escape(move["from_path"]),
+            escape(move["to_path"]),
+        )
+
+    render_section(
+        details,
+        "Accepted resource moves",
+    )
 
 @app.command()
 def dry_run(
@@ -828,6 +995,162 @@ def status(
 
         raise typer.Exit(code=1) from None
 
+@app.command()
+def reconcile(
+    output_path: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Generated project directory to reconcile."
+            ),
+        ),
+    ] = Path("."),
+    accepted_moves: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--accept-move",
+            help=(
+                "Accept a detected move as RESOURCE_ID=PATH. "
+                "May be repeated."
+            ),
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Validate and display the reconciliation "
+                "without updating project state."
+            ),
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Print the complete reconciliation result "
+                "as JSON."
+            ),
+        ),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--debug",
+            help=(
+                "Show the complete traceback when an "
+                "error occurs."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Accept detected resource moves into project state."""
+    try:
+        storage = ProjectStateStorage(output_path)
+        current_state = storage.read()
+
+        if current_state is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "No committed Boilr project state "
+                    "was found."
+                ),
+                "output_path": str(output_path),
+                "suggestion": (
+                    "Run 'boilr generate' before "
+                    "reconciling project resources."
+                ),
+            }
+            render_reconciliation_error(
+                error_data,
+                json_output=json_output,
+            )
+            raise typer.Exit(code=1)
+
+        observation = observe_project(output_path)
+
+        if observation is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "The committed Boilr project state "
+                    "could not be observed."
+                ),
+                "output_path": str(output_path),
+                "suggestion": (
+                    "Run 'boilr status' and inspect the "
+                    "project state before retrying."
+                ),
+            }
+            render_reconciliation_error(
+                error_data,
+                json_output=json_output,
+            )
+            raise typer.Exit(code=1)
+
+        parsed_moves = _parse_accepted_moves(
+            accepted_moves or []
+        )
+        plan = build_reconciliation_plan(
+            current_state,
+            observation,
+            parsed_moves,
+        )
+
+        if dry_run:
+            state_path = storage.state_path
+            applied = False
+        else:
+            state_path = apply_reconciliation_plan(
+                output_path,
+                plan,
+            )
+            applied = plan.has_changes
+
+        result_data = {
+            "output_path": str(output_path),
+            "state_path": str(state_path),
+            "dry_run": dry_run,
+            "applied": applied,
+            "plan": plan.to_dict(),
+        }
+
+        if json_output:
+            console.print_json(data=result_data)
+            return
+
+        render_reconciliation_result(result_data)
+    except BoilrError as error:
+        if debug:
+            raise
+
+        if json_output:
+            render_boilr_error_json(error)
+        else:
+            render_boilr_error(error)
+
+        raise typer.Exit(code=1) from None
+    except ValueError as error:
+        if debug:
+            raise
+
+        error_data = {
+            "code": "invalid_reconciliation_request",
+            "message": str(error),
+            "output_path": str(output_path),
+            "suggestion": (
+                "Use 'boilr status --json' to inspect "
+                "resource identifiers and move candidates."
+            ),
+        }
+        render_reconciliation_error(
+            error_data,
+            json_output=json_output,
+        )
+        raise typer.Exit(code=1) from None
 
 @app.command()
 def generate(
