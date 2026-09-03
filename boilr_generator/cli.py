@@ -13,7 +13,11 @@ from rich.table import Table
 from rich.tree import Tree
 
 from boilr_generator.exceptions import BoilrError
-from boilr_generator.generation import ProjectGenerator
+from boilr_generator.generation import (
+    ProjectGenerator,
+    observe_project,
+)
+from boilr_generator.state import ProjectStateStorage
 from boilr_generator.manifest import load_project_manifest_from_yaml
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.paths import get_builtin_modules_path
@@ -393,6 +397,201 @@ def render_files_tree(
         border_style="bright_black",
     )
 
+def _status_label(key: str) -> str:
+    """Build a readable label from one status key."""
+    return (
+        key.removesuffix("_count")
+        .replace("_", " ")
+        .capitalize()
+    )
+
+
+def _status_entry_path(entry: dict) -> str:
+    """Select the most useful path from an observation."""
+    for key in (
+        "actual_path",
+        "observed_path",
+        "path",
+        "expected_path",
+        "materialized_path",
+    ):
+        value = entry.get(key)
+
+        if value:
+            return str(value)
+
+    return "-"
+
+
+def _status_entries(
+    observation: dict,
+) -> list[tuple[str, dict]]:
+    """Collect serialized resource observations."""
+    entries: list[tuple[str, dict]] = []
+
+    for section, value in observation.items():
+        if not isinstance(value, list):
+            continue
+
+        for item in value:
+            if isinstance(item, dict):
+                entries.append(
+                    (section, item)
+                )
+
+    return entries
+
+
+def render_project_status(
+    status_data: dict,
+) -> None:
+    """Render one project observation for humans."""
+    observation = status_data["observation"]
+    summary = observation["summary"]
+    has_drift = bool(
+        observation["has_drift"]
+    )
+    pending_transaction = status_data[
+        "pending_transaction"
+    ]
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_column(style="bold")
+    overview.add_column()
+
+    overview.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                status_data["output_path"]
+            )
+        ),
+    )
+    overview.add_row(
+        "Drift",
+        (
+            "[yellow]Yes[/yellow]"
+            if has_drift
+            else "[green]No[/green]"
+        ),
+    )
+    overview.add_row(
+        "Pending transaction",
+        (
+            "[yellow]Yes[/yellow]"
+            if pending_transaction
+            else "No"
+        ),
+    )
+
+    render_section(
+        overview,
+        "Boilr project status",
+        border_style=(
+            "yellow"
+            if has_drift or pending_transaction
+            else "green"
+        ),
+    )
+
+    counters = Table.grid(padding=(0, 4))
+    counters.add_column(style="bold")
+    counters.add_column(justify="right")
+
+    for key, value in summary.items():
+        if key == "has_drift":
+            continue
+
+        counters.add_row(
+            _status_label(key),
+            str(value),
+        )
+
+    render_section(
+        counters,
+        "Resource summary",
+    )
+
+    details = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    details.add_column("Status")
+    details.add_column("Resource")
+    details.add_column("Path")
+    details.add_column("Candidates")
+
+    status_styles = {
+        "modified": "yellow",
+        "missing": "red",
+        "moved": "cyan",
+        "move_candidate": "cyan",
+        "ambiguous_move": "magenta",
+        "type_changed": "red",
+        "mode_changed": "yellow",
+        "untracked": "blue",
+    }
+
+    visible_entries = 0
+
+    for section, entry in _status_entries(
+        observation
+    ):
+        status = str(
+            entry.get(
+                "status",
+                section.rstrip("s"),
+            )
+        )
+
+        if status == "unchanged":
+            continue
+
+        resource_id = str(
+            entry.get("resource_id")
+            or entry.get("id")
+            or "-"
+        )
+        candidate_paths = entry.get(
+            "candidate_paths",
+            [],
+        )
+        candidates = (
+            ", ".join(
+                str(path)
+                for path in candidate_paths
+            )
+            if candidate_paths
+            else "-"
+        )
+        style = status_styles.get(
+            status,
+            "white",
+        )
+
+        details.add_row(
+            f"[{style}]{escape(status)}[/]",
+            escape(resource_id),
+            escape(
+                _status_entry_path(entry)
+            ),
+            escape(candidates),
+        )
+        visible_entries += 1
+
+    if visible_entries == 0:
+        details.add_row(
+            "[green]unchanged[/green]",
+            "-",
+            "No resource drift detected.",
+            "-",
+        )
+
+    render_section(
+        details,
+        "Resource drift",
+    )
+
 
 @app.command()
 def dry_run(
@@ -490,6 +689,145 @@ def dry_run(
             render_boilr_error(error)
 
         raise typer.Exit(code=1) from None
+
+@app.command()
+def status(
+    output_path: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Generated project directory to inspect."
+            ),
+        ),
+    ] = Path("."),
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Print the complete project observation "
+                "as JSON."
+            ),
+        ),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--debug",
+            help=(
+                "Show the complete traceback when an "
+                "error occurs."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Inspect generated resources without modifying the project."""
+    try:
+        storage = ProjectStateStorage(output_path)
+        pending_transaction = (
+            storage.pending_state_path.exists()
+        )
+        observation = observe_project(
+            output_path
+        )
+
+        if observation is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "No committed Boilr project state "
+                    "was found."
+                ),
+                "output_path": str(output_path),
+                "pending_transaction": (
+                    pending_transaction
+                ),
+                "suggestion": (
+                    "Run 'boilr generate' before "
+                    "inspecting project status."
+                ),
+            }
+
+            if json_output:
+                console.print_json(
+                    data=error_data
+                )
+            else:
+                table = Table.grid(
+                    padding=(0, 2)
+                )
+                table.add_column(
+                    style="bold red"
+                )
+                table.add_column()
+
+                table.add_row(
+                    "Message",
+                    escape(
+                        error_data["message"]
+                    ),
+                )
+                table.add_row(
+                    "Output",
+                    escape(
+                        shorten_path(
+                            output_path
+                        )
+                    ),
+                )
+                table.add_row(
+                    "Pending transaction",
+                    (
+                        "[yellow]Yes[/yellow]"
+                        if pending_transaction
+                        else "No"
+                    ),
+                )
+                table.add_row(
+                    "Suggestion",
+                    escape(
+                        error_data[
+                            "suggestion"
+                        ]
+                    ),
+                )
+
+                render_section(
+                    table,
+                    "Boilr status error",
+                    border_style="red",
+                )
+
+            raise typer.Exit(code=1)
+
+        status_data = {
+            "output_path": str(output_path),
+            "pending_transaction": (
+                pending_transaction
+            ),
+            "observation": (
+                observation.to_dict()
+            ),
+        }
+
+        if json_output:
+            console.print_json(
+                data=status_data
+            )
+            return
+
+        render_project_status(status_data)
+    except BoilrError as error:
+        if debug:
+            raise
+
+        if json_output:
+            render_boilr_error_json(error)
+        else:
+            render_boilr_error(error)
+
+        raise typer.Exit(code=1) from None
+
 
 @app.command()
 def generate(
