@@ -9,6 +9,11 @@ from boilr_generator.state.observation import (
     classify_tracked_resources,
     UntrackedResourceObservation,
 )
+from boilr_generator.state.reconciliation import (
+    ReconciliationMove,
+    ReconciliationPlan,
+    build_reconciliation_plan,
+)
 from boilr_generator.state.schemas import (
     ProjectState,
     StateBinding,
@@ -29,6 +34,8 @@ __all__ = [
     "ProjectObservation",
     "ProjectState",
     "ProjectStateStorage",
+    "ReconciliationMove",
+    "ReconciliationPlan",
     "StateBinding",
     "StateModule",
     "StateProject",
@@ -36,6 +43,7 @@ __all__ = [
     "TrackedResourceObservation",
     "UntrackedResourceObservation",
     "build_initial_project_state",
+    "build_reconciliation_plan",
     "classify_tracked_resources",
     "deserialize_project_state",
     "fingerprint_model",
