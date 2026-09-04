@@ -1,12 +1,18 @@
 """Generation planning models."""
 
+from __future__ import annotations
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from boilr_generator.core.project import ResolvedProject
 from boilr_generator.state.schemas import ProjectState
+if TYPE_CHECKING:
+    from boilr_generator.state.observation import (
+        ProjectObservation,
+    )
 
 PathKind = Literal[
     "file",
@@ -254,3 +260,154 @@ class GenerationPlan:
         data["summary"] = self.summary
 
         return data
+
+UpdateResourceAction = Literal[
+    "create",
+    "replace",
+    "remove",
+    "retain",
+    "relocate",
+    "forget",
+]
+UpdateConflictReason = Literal[
+    "modified_resource",
+    "type_changed_resource",
+    "mode_changed_resource",
+    "unresolved_move",
+    "untracked_destination",
+    "tracked_destination",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedUpdateChange:
+    """One resource transition requested by an update."""
+
+    resource_id: str
+    action: UpdateResourceAction
+    current_path: str | None
+    target_path: str | None
+    observed_status: str | None
+    changed_fields: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return one JSON-compatible transition."""
+        data = asdict(self)
+        data["changed_fields"] = list(
+            self.changed_fields
+        )
+        return data
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedUpdateConflict:
+    """One unsafe resource transition blocking an update."""
+
+    resource_id: str
+    reason: UpdateConflictReason
+    path: str
+    observed_status: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return one JSON-compatible conflict."""
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class ProjectUpdatePlan:
+    """Read-only comparison of current and desired project state."""
+
+    candidate_plan: GenerationPlan = field(repr=False)
+    current_state: ProjectState
+    observation: ProjectObservation = field(repr=False)
+    desired_state: ProjectState
+    changes: tuple[PlannedUpdateChange, ...]
+    conflicts: tuple[PlannedUpdateConflict, ...] = ()
+
+    @property
+    def can_execute(self) -> bool:
+        """Return whether every transition is currently safe."""
+        return not self.conflicts
+
+    @property
+    def has_filesystem_changes(self) -> bool:
+        """Return whether execution would mutate project files."""
+        mutating_actions = {
+            "create",
+            "replace",
+            "remove",
+            "relocate",
+        }
+        return any(
+            change.action in mutating_actions
+            for change in self.changes
+        )
+
+    @property
+    def has_changes(self) -> bool:
+        """Return whether filesystem or persisted state differs."""
+        return (
+            self.has_filesystem_changes
+            or self.desired_state != self.current_state
+        )
+
+    @property
+    def summary(self) -> dict[str, int]:
+        """Return deterministic transition counters."""
+        counts = Counter(
+            change.action
+            for change in self.changes
+        )
+
+        return {
+            "resources_count": len(self.changes),
+            "create_count": counts["create"],
+            "replace_count": counts["replace"],
+            "remove_count": counts["remove"],
+            "retain_count": counts["retain"],
+            "relocate_count": counts["relocate"],
+            "forget_count": counts["forget"],
+            "filesystem_changes_count": sum(
+                counts[action]
+                for action in (
+                    "create",
+                    "replace",
+                    "remove",
+                    "relocate",
+                )
+            ),
+            "conflicts_count": len(self.conflicts),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the complete update decision contract."""
+        return {
+            "output_path": str(
+                self.candidate_plan.output_path
+            ),
+            "current_state": (
+                self.current_state.model_dump(
+                    mode="json"
+                )
+            ),
+            "desired_state": (
+                self.desired_state.model_dump(
+                    mode="json"
+                )
+            ),
+            "observation": self.observation.to_dict(),
+            "changes": [
+                change.to_dict()
+                for change in self.changes
+            ],
+            "conflicts": [
+                conflict.to_dict()
+                for conflict in self.conflicts
+            ],
+            "summary": self.summary,
+            "can_execute": self.can_execute,
+            "has_filesystem_changes": (
+                self.has_filesystem_changes
+            ),
+            "has_changes": self.has_changes,
+        }
