@@ -1,9 +1,14 @@
 """Read-only planning of safe generated-project updates."""
 
+from dataclasses import replace
+from pathlib import Path, PurePosixPath
+
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
+    PlannedDirectory,
     PlannedFile,
     PlannedPathState,
+    PlannedRemoval,
     PlannedUpdateChange,
     PlannedUpdateConflict,
     ProjectUpdatePlan,
@@ -289,12 +294,385 @@ def _validated_desired_state(
     return ProjectState.model_validate(data)
 
 
+def _absolute_output_path(
+    output_path: Path,
+    relative_path: str,
+) -> Path:
+    """Build an output path from a canonical POSIX path."""
+    return output_path.joinpath(
+        *PurePosixPath(relative_path).parts
+    )
+
+
+def _sorted_update_conflicts(
+    conflicts: list[PlannedUpdateConflict],
+) -> tuple[PlannedUpdateConflict, ...]:
+    """Return unique update conflicts in stable order."""
+    return tuple(
+        sorted(
+            set(conflicts),
+            key=lambda conflict: (
+                conflict.resource_id,
+                conflict.reason,
+                conflict.path,
+                conflict.observed_status or "",
+            ),
+        )
+    )
+
+
+def _materialize_update_operations(
+    *,
+    output_path: Path,
+    changes: list[PlannedUpdateChange],
+    current_by_id: dict[str, StateResource],
+    desired_state: ProjectState,
+    files_by_id: dict[str, PlannedFile],
+) -> tuple[
+    list[PlannedFile],
+    list[PlannedRemoval],
+]:
+    """Translate safe resource transitions into exact operations."""
+    desired_by_id = {
+        resource.id: resource
+        for resource in desired_state.resources
+    }
+    files: list[PlannedFile] = []
+    removals: list[PlannedRemoval] = []
+
+    for change in changes:
+        current = current_by_id.get(
+            change.resource_id
+        )
+        desired = desired_by_id.get(
+            change.resource_id
+        )
+
+        if change.current_path is not None:
+            if (
+                current is None
+                or current.materialized_path
+                != change.current_path
+            ):
+                raise ValueError(
+                    "The update change current path does not "
+                    "match the persisted state for resource "
+                    f"'{change.resource_id}'."
+                )
+
+        if change.target_path is not None:
+            if (
+                desired is None
+                or desired.materialized_path
+                != change.target_path
+            ):
+                raise ValueError(
+                    "The update change target path does not "
+                    "match the desired state for resource "
+                    f"'{change.resource_id}'."
+                )
+
+        if change.action in {
+            "create",
+            "replace",
+            "relocate",
+        }:
+            planned_file = files_by_id.get(
+                change.resource_id
+            )
+
+            if (
+                planned_file is None
+                or change.target_path is None
+            ):
+                raise ValueError(
+                    "A materialized file operation is missing "
+                    "its desired file or target path for "
+                    f"resource '{change.resource_id}'."
+                )
+
+            file_action = (
+                "overwrite"
+                if change.action == "replace"
+                else "create"
+            )
+
+            files.append(
+                replace(
+                    planned_file,
+                    destination_path=(
+                        _absolute_output_path(
+                            output_path,
+                            change.target_path,
+                        )
+                    ),
+                    relative_destination_path=(
+                        change.target_path
+                    ),
+                    action=file_action,
+                )
+            )
+
+        if change.action in {
+            "remove",
+            "relocate",
+        }:
+            if (
+                current is None
+                or change.current_path is None
+            ):
+                raise ValueError(
+                    "A materialized removal is missing its "
+                    "persisted resource or current path for "
+                    f"resource '{change.resource_id}'."
+                )
+
+            removals.append(
+                PlannedRemoval(
+                    path=_absolute_output_path(
+                        output_path,
+                        change.current_path,
+                    ),
+                    relative_path=(
+                        change.current_path
+                    ),
+                    kind=current.kind,
+                    module=current.owner,
+                    reason="replace",
+                )
+            )
+
+        if change.action not in {
+            "create",
+            "replace",
+            "remove",
+            "retain",
+            "relocate",
+            "forget",
+        }:
+            raise ValueError(
+                "Unsupported update resource action: "
+                f"'{change.action}'."
+            )
+
+    removals.sort(
+        key=lambda removal: (
+            -len(
+                PurePosixPath(
+                    removal.relative_path
+                ).parts
+            ),
+            removal.relative_path,
+        )
+    )
+
+    return files, removals
+
+
+def _plan_update_directories(
+    *,
+    output_path: Path,
+    initial_output_state: list[PlannedPathState],
+    files: list[PlannedFile],
+    removals: list[PlannedRemoval],
+    tracked_paths: dict[str, str],
+) -> tuple[
+    list[PlannedDirectory],
+    list[PlannedUpdateConflict],
+]:
+    """Plan required directories and detect occupied parents."""
+    required_directories: dict[
+        Path,
+        PlannedFile,
+    ] = {}
+
+    for planned_file in files:
+        parent = planned_file.destination_path.parent
+
+        while True:
+            required_directories.setdefault(
+                parent,
+                planned_file,
+            )
+
+            if parent == output_path:
+                break
+
+            if output_path not in parent.parents:
+                raise ValueError(
+                    "A materialized update destination escapes "
+                    "the output directory."
+                )
+
+            parent = parent.parent
+
+    initial_state_by_path = {
+        state.path: state
+        for state in initial_output_state
+    }
+    removal_paths = {
+        removal.path
+        for removal in removals
+    }
+
+    directories: list[PlannedDirectory] = []
+    conflicts: list[PlannedUpdateConflict] = []
+
+    for directory_path, planned_file in (
+        required_directories.items()
+    ):
+        relative_path = (
+            "."
+            if directory_path == output_path
+            else directory_path.relative_to(
+                output_path
+            ).as_posix()
+        )
+
+        if directory_path in removal_paths:
+            directories.append(
+                PlannedDirectory(
+                    path=directory_path,
+                    relative_path=relative_path,
+                    reason=(
+                        "output"
+                        if directory_path == output_path
+                        else "parent"
+                    ),
+                    module=planned_file.module,
+                )
+            )
+            continue
+
+        current = initial_state_by_path.get(
+            directory_path
+        )
+
+        if current is None or not current.exists:
+            directories.append(
+                PlannedDirectory(
+                    path=directory_path,
+                    relative_path=relative_path,
+                    reason=(
+                        "output"
+                        if directory_path == output_path
+                        else "parent"
+                    ),
+                    module=planned_file.module,
+                )
+            )
+            continue
+
+        if current.kind == "directory":
+            continue
+
+        reason: UpdateConflictReason = (
+            "tracked_destination"
+            if relative_path in tracked_paths
+            else "untracked_destination"
+        )
+        conflicts.append(
+            PlannedUpdateConflict(
+                resource_id=(
+                    planned_file.resource_id
+                ),
+                reason=reason,
+                path=relative_path,
+            )
+        )
+
+    directories.sort(
+        key=lambda directory: (
+            len(
+                PurePosixPath(
+                    directory.relative_path
+                ).parts
+            ),
+            directory.relative_path,
+        )
+    )
+
+    return directories, conflicts
+
+
+def _materialize_update_execution_plan(
+    *,
+    candidate_plan: GenerationPlan,
+    current_state: ProjectState,
+    desired_state: ProjectState,
+    changes: list[PlannedUpdateChange],
+    files_by_id: dict[str, PlannedFile],
+) -> tuple[
+    GenerationPlan,
+    list[PlannedUpdateConflict],
+]:
+    """Build an exact but still unexecuted filesystem plan."""
+    current_by_id = {
+        resource.id: resource
+        for resource in current_state.resources
+    }
+    tracked_paths = {
+        resource.materialized_path: resource.id
+        for resource in current_state.resources
+    }
+
+    files, removals = (
+        _materialize_update_operations(
+            output_path=candidate_plan.output_path,
+            changes=changes,
+            current_by_id=current_by_id,
+            desired_state=desired_state,
+            files_by_id=files_by_id,
+        )
+    )
+    directories, conflicts = (
+        _plan_update_directories(
+            output_path=candidate_plan.output_path,
+            initial_output_state=(
+                candidate_plan.initial_output_state
+            ),
+            files=files,
+            removals=removals,
+            tracked_paths=tracked_paths,
+        )
+    )
+
+    execution_plan = GenerationPlan(
+        resolved_project=(
+            candidate_plan.resolved_project
+        ),
+        output_path=candidate_plan.output_path,
+        initial_output_state=list(
+            candidate_plan.initial_output_state
+        ),
+        directories=directories,
+        files=files,
+        removals=removals,
+        docker_services=list(
+            candidate_plan.docker_services
+        ),
+        env_variables=list(
+            candidate_plan.env_variables
+        ),
+        clean_output=False,
+        desired_state=desired_state,
+    )
+
+    return execution_plan, conflicts
+
+
 def build_project_update_plan(
     candidate_plan: GenerationPlan,
     current_state: ProjectState,
     observation: ProjectObservation,
 ) -> ProjectUpdatePlan:
     """Compare stored, observed, and newly desired project state."""
+    if candidate_plan.clean_output:
+        raise ValueError(
+            "A project update cannot be built from a "
+            "clean generation plan."
+        )
+
     candidate_state = candidate_plan.desired_state
 
     if candidate_state is None:
@@ -316,8 +694,10 @@ def build_project_update_plan(
             "The candidate plan targets a different project."
         )
 
-    _, desired_by_id = _desired_resources(
-        candidate_plan
+    files_by_id, desired_by_id = (
+        _desired_resources(
+            candidate_plan
+        )
     )
     current_by_id = {
         resource.id: resource
@@ -543,20 +923,33 @@ def build_project_update_plan(
         final_resources,
     )
 
+    execution_plan, materialization_conflicts = (
+        _materialize_update_execution_plan(
+            candidate_plan=candidate_plan,
+            current_state=current_state,
+            desired_state=desired_state,
+            changes=changes,
+            files_by_id=files_by_id,
+        )
+    )
+
+    all_conflicts = _sorted_update_conflicts(
+        [
+            *conflicts,
+            *materialization_conflicts,
+        ]
+    )
+
     return ProjectUpdatePlan(
         candidate_plan=candidate_plan,
         current_state=current_state,
         observation=observation,
         desired_state=desired_state,
         changes=tuple(changes),
-        conflicts=tuple(
-            sorted(
-                conflicts,
-                key=lambda conflict: (
-                    conflict.resource_id,
-                    conflict.reason,
-                    conflict.path,
-                ),
-            )
+        conflicts=all_conflicts,
+        execution_plan=(
+            execution_plan
+            if not all_conflicts
+            else None
         ),
     )

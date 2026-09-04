@@ -323,11 +323,18 @@ class ProjectUpdatePlan:
     desired_state: ProjectState
     changes: tuple[PlannedUpdateChange, ...]
     conflicts: tuple[PlannedUpdateConflict, ...] = ()
+    execution_plan: GenerationPlan | None = field(
+        default=None,
+        repr=False,
+    )
 
     @property
     def can_execute(self) -> bool:
-        """Return whether every transition is currently safe."""
-        return not self.conflicts
+        """Return whether the update has a safe executable plan."""
+        return (
+            not self.conflicts
+            and self.execution_plan is not None
+        )
 
     @property
     def has_filesystem_changes(self) -> bool:
@@ -396,6 +403,11 @@ class ProjectUpdatePlan:
                 )
             ),
             "observation": self.observation.to_dict(),
+            "execution_plan": (
+                self.execution_plan.to_dict()
+                if self.execution_plan is not None
+                else None
+            ),
             "changes": [
                 change.to_dict()
                 for change in self.changes
