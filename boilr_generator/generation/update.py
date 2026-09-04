@@ -22,6 +22,9 @@ from boilr_generator.state.schemas import (
     ProjectState,
     StateResource,
 )
+from boilr_generator.generation.module_update import (
+    build_project_module_transition_plan,
+)
 
 _RESOURCE_COMPARISON_FIELDS = (
     "kind",
@@ -923,6 +926,16 @@ def build_project_update_plan(
         final_resources,
     )
 
+    module_transitions = (
+        build_project_module_transition_plan(
+            replace(
+                candidate_plan,
+                desired_state=desired_state,
+            ),
+            current_state,
+        )
+    )
+
     execution_plan, materialization_conflicts = (
         _materialize_update_execution_plan(
             candidate_plan=candidate_plan,
@@ -946,10 +959,14 @@ def build_project_update_plan(
         observation=observation,
         desired_state=desired_state,
         changes=tuple(changes),
+        module_transitions=module_transitions,
         conflicts=all_conflicts,
         execution_plan=(
             execution_plan
-            if not all_conflicts
+            if (
+                not all_conflicts
+                and module_transitions.can_execute
+            )
             else None
         ),
     )

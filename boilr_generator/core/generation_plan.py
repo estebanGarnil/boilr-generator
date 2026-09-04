@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from boilr_generator.core.project import ResolvedProject
 from boilr_generator.state.schemas import ProjectState
 if TYPE_CHECKING:
+    from boilr_generator.generation.module_update import (
+        ProjectModuleTransitionPlan,
+    )
     from boilr_generator.state.observation import (
         ProjectObservation,
     )
@@ -322,6 +325,9 @@ class ProjectUpdatePlan:
     observation: ProjectObservation = field(repr=False)
     desired_state: ProjectState
     changes: tuple[PlannedUpdateChange, ...]
+    module_transitions: ProjectModuleTransitionPlan = field(
+        repr=False
+    )
     conflicts: tuple[PlannedUpdateConflict, ...] = ()
     execution_plan: GenerationPlan | None = field(
         default=None,
@@ -332,7 +338,8 @@ class ProjectUpdatePlan:
     def can_execute(self) -> bool:
         """Return whether the update has a safe executable plan."""
         return (
-            not self.conflicts
+            self.module_transitions.can_execute
+            and not self.conflicts
             and self.execution_plan is not None
         )
 
@@ -403,6 +410,9 @@ class ProjectUpdatePlan:
                 )
             ),
             "observation": self.observation.to_dict(),
+            "module_transitions": (
+                self.module_transitions.to_dict()
+            ),
             "execution_plan": (
                 self.execution_plan.to_dict()
                 if self.execution_plan is not None
