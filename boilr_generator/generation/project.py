@@ -12,6 +12,7 @@ from boilr_generator.core.generation_plan import (
     PlannedFile,
     PlannedPathState,
     PlannedRemoval,
+    ProjectUpdatePlan,
     RemovalReason,
 )
 from boilr_generator.core.project import ResolvedProject
@@ -625,6 +626,519 @@ class ProjectGenerator:
                 storage=state_storage,
                 state=desired_state,
             )
+
+    def execute_update(
+        self,
+        update_plan: ProjectUpdatePlan,
+    ) -> None:
+        """Execute one precomputed safe project update."""
+        execution_plan = (
+            self._validate_update_execution_contract(
+                update_plan
+            )
+        )
+        storage = ProjectStateStorage(
+            execution_plan.output_path
+        )
+
+        self._validate_update_state_baseline(
+            update_plan=update_plan,
+            storage=storage,
+        )
+        self._validate_initial_output_state(
+            execution_plan
+        )
+
+        if not update_plan.has_changes:
+            return
+
+        self.execute(execution_plan)
+
+    @staticmethod
+    def _validate_update_execution_contract(
+        update_plan: ProjectUpdatePlan,
+    ) -> GenerationPlan:
+        """Reject incomplete, conflicting, or altered update plans."""
+        if update_plan.conflicts:
+            raise FileConflictError(
+                (
+                    "Cannot execute the project update while "
+                    "resource conflicts remain."
+                ),
+                field_path="generation.update.conflicts",
+                context={
+                    "reason": "update_conflicts",
+                    "conflicts": [
+                        conflict.to_dict()
+                        for conflict
+                        in update_plan.conflicts
+                    ],
+                },
+                suggestion=(
+                    "Resolve or reconcile every reported "
+                    "resource conflict, then create a new "
+                    "update plan."
+                ),
+            )
+
+        execution_plan = update_plan.execution_plan
+
+        if execution_plan is None:
+            raise StaleGenerationPlanError(
+                (
+                    "Cannot execute a project update without "
+                    "a materialized execution plan."
+                ),
+                field_path=(
+                    "generation.update.execution_plan"
+                ),
+                context={
+                    "reason": (
+                        "missing_update_execution_plan"
+                    ),
+                    "output_path": str(
+                        update_plan.candidate_plan.output_path
+                    ),
+                },
+                suggestion=(
+                    "Create a new project update plan before "
+                    "executing it."
+                ),
+            )
+
+        contract_errors: list[str] = []
+        candidate_plan = update_plan.candidate_plan
+
+        if candidate_plan.clean_output:
+            contract_errors.append(
+                "candidate_plan_is_clean"
+            )
+
+        if execution_plan.clean_output:
+            contract_errors.append(
+                "execution_plan_is_clean"
+            )
+
+        if (
+            execution_plan.output_path
+            != candidate_plan.output_path
+        ):
+            contract_errors.append(
+                "output_path_mismatch"
+            )
+
+        if (
+            execution_plan.resolved_project
+            != candidate_plan.resolved_project
+        ):
+            contract_errors.append(
+                "resolved_project_mismatch"
+            )
+
+        if (
+            execution_plan.initial_output_state
+            != candidate_plan.initial_output_state
+        ):
+            contract_errors.append(
+                "initial_output_state_mismatch"
+            )
+
+        if (
+            execution_plan.desired_state
+            != update_plan.desired_state
+        ):
+            contract_errors.append(
+                "desired_state_mismatch"
+            )
+
+        change_ids = [
+            change.resource_id
+            for change in update_plan.changes
+        ]
+
+        if len(change_ids) != len(set(change_ids)):
+            contract_errors.append(
+                "duplicate_update_changes"
+            )
+
+        expected_file_actions = {
+            "create": "create",
+            "replace": "overwrite",
+            "relocate": "create",
+        }
+        expected_file_operations: list[
+            tuple[str, str, str]
+        ] = []
+
+        for change in update_plan.changes:
+            file_action = expected_file_actions.get(
+                change.action
+            )
+
+            if file_action is None:
+                continue
+
+            if change.target_path is None:
+                contract_errors.append(
+                    "missing_change_target:"
+                    f"{change.resource_id}"
+                )
+                continue
+
+            expected_file_operations.append(
+                (
+                    change.resource_id,
+                    file_action,
+                    change.target_path,
+                )
+            )
+
+        actual_file_operations = [
+            (
+                planned_file.resource_id,
+                planned_file.action,
+                planned_file.relative_destination_path,
+            )
+            for planned_file in execution_plan.files
+        ]
+
+        if sorted(expected_file_operations) != sorted(
+            actual_file_operations
+        ):
+            contract_errors.append(
+                "file_operations_mismatch"
+            )
+
+        current_resources = {
+            resource.id: resource
+            for resource
+            in update_plan.current_state.resources
+        }
+        desired_resources = {
+            resource.id: resource
+            for resource
+            in update_plan.desired_state.resources
+        }
+        expected_removals: list[
+            tuple[str, str, str | None, str]
+        ] = []
+
+        for change in update_plan.changes:
+            if change.action not in {
+                "remove",
+                "relocate",
+            }:
+                continue
+
+            current_resource = current_resources.get(
+                change.resource_id
+            )
+
+            if (
+                current_resource is None
+                or change.current_path is None
+            ):
+                contract_errors.append(
+                    "missing_removal_source:"
+                    f"{change.resource_id}"
+                )
+                continue
+
+            expected_removals.append(
+                (
+                    change.current_path,
+                    current_resource.kind,
+                    current_resource.owner,
+                    "replace",
+                )
+            )
+
+        actual_removals = [
+            (
+                removal.relative_path,
+                removal.kind,
+                removal.module,
+                removal.reason,
+            )
+            for removal in execution_plan.removals
+        ]
+
+        expected_removals.sort(
+            key=lambda removal: removal[0]
+        )
+        actual_removals.sort(
+            key=lambda removal: removal[0]
+        )
+
+        if expected_removals != actual_removals:
+            contract_errors.append(
+                "removal_operations_mismatch"
+            )
+
+        output_path = execution_plan.output_path
+
+        for planned_file in execution_plan.files:
+            resource = desired_resources.get(
+                planned_file.resource_id
+            )
+
+            if resource is None:
+                contract_errors.append(
+                    "unknown_file_resource:"
+                    f"{planned_file.resource_id}"
+                )
+                continue
+
+            expected_destination = output_path.joinpath(
+                *PurePosixPath(
+                    planned_file.relative_destination_path
+                ).parts
+            )
+
+            if (
+                planned_file.destination_path
+                != expected_destination
+            ):
+                contract_errors.append(
+                    "file_destination_mismatch:"
+                    f"{planned_file.resource_id}"
+                )
+
+            if (
+                resource.kind != "file"
+                or resource.default_path
+                != planned_file.default_relative_path
+                or resource.materialized_path
+                != planned_file.relative_destination_path
+                or resource.owner
+                != planned_file.owner
+                or resource.contributors
+                != tuple(planned_file.contributors)
+                or resource.content_size
+                != planned_file.content_size
+                or resource.content_sha256
+                != planned_file.content_sha256
+                or resource.mode
+                != planned_file.mode
+            ):
+                contract_errors.append(
+                    "file_metadata_mismatch:"
+                    f"{planned_file.resource_id}"
+                )
+
+        expected_removal_paths = {
+            removal.relative_path
+            for removal in execution_plan.removals
+        }
+
+        if len(expected_removal_paths) != len(
+            execution_plan.removals
+        ):
+            contract_errors.append(
+                "duplicate_removal_paths"
+            )
+
+        for removal in execution_plan.removals:
+            expected_path = output_path.joinpath(
+                *PurePosixPath(
+                    removal.relative_path
+                ).parts
+            )
+
+            if removal.path != expected_path:
+                contract_errors.append(
+                    "removal_path_mismatch:"
+                    f"{removal.relative_path}"
+                )
+
+        allowed_directory_paths: set[Path] = set()
+
+        for planned_file in execution_plan.files:
+            parent = planned_file.destination_path.parent
+
+            while True:
+                allowed_directory_paths.add(parent)
+
+                if parent == output_path:
+                    break
+
+                if output_path not in parent.parents:
+                    contract_errors.append(
+                        "file_outside_output:"
+                        f"{planned_file.resource_id}"
+                    )
+                    break
+
+                parent = parent.parent
+
+        directory_paths = [
+            directory.path
+            for directory in execution_plan.directories
+        ]
+
+        if len(directory_paths) != len(
+            set(directory_paths)
+        ):
+            contract_errors.append(
+                "duplicate_directory_paths"
+            )
+
+        for directory in execution_plan.directories:
+            if directory.path not in (
+                allowed_directory_paths
+            ):
+                contract_errors.append(
+                    "unrelated_directory:"
+                    f"{directory.relative_path}"
+                )
+
+            expected_relative_path = (
+                "."
+                if directory.path == output_path
+                else directory.path.relative_to(
+                    output_path
+                ).as_posix()
+                if output_path in directory.path.parents
+                else None
+            )
+
+            if (
+                expected_relative_path is None
+                or directory.relative_path
+                != expected_relative_path
+            ):
+                contract_errors.append(
+                    "directory_path_mismatch:"
+                    f"{directory.relative_path}"
+                )
+
+            expected_reason = (
+                "output"
+                if directory.path == output_path
+                else "parent"
+            )
+
+            if directory.reason != expected_reason:
+                contract_errors.append(
+                    "directory_reason_mismatch:"
+                    f"{directory.relative_path}"
+                )
+
+        if contract_errors:
+            raise StaleGenerationPlanError(
+                (
+                    "Cannot execute the project update because "
+                    "its materialized contract is invalid."
+                ),
+                field_path=(
+                    "generation.update.execution_plan"
+                ),
+                context={
+                    "reason": (
+                        "invalid_update_execution_plan"
+                    ),
+                    "output_path": str(output_path),
+                    "errors": sorted(
+                        set(contract_errors)
+                    ),
+                },
+                suggestion=(
+                    "Discard the altered plan and create a new "
+                    "project update plan."
+                ),
+            )
+
+        return execution_plan
+
+    @staticmethod
+    def _validate_update_state_baseline(
+        *,
+        update_plan: ProjectUpdatePlan,
+        storage: ProjectStateStorage,
+    ) -> None:
+        """Require the committed state used during planning."""
+        pending_path = storage.pending_state_path
+
+        if (
+            pending_path.exists()
+            or pending_path.is_symlink()
+        ):
+            raise StateTransactionError(
+                (
+                    "A pending project state transaction "
+                    "already exists."
+                ),
+                field_path="generation.update.state",
+                context={
+                    "reason": "pending_state_exists",
+                    "state_path": str(
+                        storage.state_path
+                    ),
+                    "pending_state_path": str(
+                        pending_path
+                    ),
+                },
+                suggestion=(
+                    "Inspect and recover the pending "
+                    "transaction before updating the project."
+                ),
+            )
+
+        actual_state = storage.read()
+
+        if actual_state is None:
+            raise StaleGenerationPlanError(
+                (
+                    "Cannot execute the project update because "
+                    "the committed project state is missing."
+                ),
+                field_path="generation.update.state",
+                context={
+                    "reason": "project_state_missing",
+                    "state_path": str(
+                        storage.state_path
+                    ),
+                },
+                suggestion=(
+                    "Restore the project state or generate the "
+                    "project again before updating it."
+                ),
+            )
+
+        if actual_state == update_plan.current_state:
+            return
+
+        raise StaleGenerationPlanError(
+            (
+                "Cannot execute the project update because "
+                "the committed project state changed after "
+                "planning."
+            ),
+            field_path="generation.update.state",
+            context={
+                "reason": "project_state_changed",
+                "state_path": str(
+                    storage.state_path
+                ),
+                "expected_generator_version": (
+                    update_plan.current_state.generator_version
+                ),
+                "actual_generator_version": (
+                    actual_state.generator_version
+                ),
+                "expected_manifest_sha256": (
+                    update_plan.current_state.project
+                    .manifest_sha256
+                ),
+                "actual_manifest_sha256": (
+                    actual_state.project.manifest_sha256
+                ),
+            },
+            suggestion=(
+                "Create a new update plan from the current "
+                "committed project state."
+            ),
+        )
 
     @staticmethod
     def _begin_state_transaction(
