@@ -16,6 +16,7 @@ from boilr_generator.exceptions import BoilrError
 from boilr_generator.generation import (
     ProjectGenerator,
     apply_reconciliation_plan,
+    build_project_update_plan,
     observe_project,
 )
 from boilr_generator.state import (
@@ -760,6 +761,263 @@ def render_reconciliation_result(
         "Accepted resource moves",
     )
 
+def render_update_error(
+    error_data: dict,
+    *,
+    json_output: bool,
+) -> None:
+    """Render one invalid project-update request."""
+    if json_output:
+        console.print_json(data=error_data)
+        return
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold red")
+    table.add_column()
+
+    table.add_row(
+        "Message",
+        escape(error_data["message"]),
+    )
+    table.add_row(
+        "Code",
+        escape(error_data["code"]),
+    )
+    table.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                error_data["output_path"]
+            )
+        ),
+    )
+    table.add_row(
+        "Suggestion",
+        escape(error_data["suggestion"]),
+    )
+
+    render_section(
+        table,
+        "Boilr update error",
+        border_style="red",
+    )
+
+
+def render_update_result(
+    result_data: dict,
+    *,
+    show_details: bool,
+) -> None:
+    """Render one project update result for humans."""
+    plan = result_data["plan"]
+    summary = plan["summary"]
+    conflicts = plan["conflicts"]
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_column(style="bold")
+    overview.add_column()
+
+    overview.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                result_data["output_path"]
+            )
+        ),
+    )
+    overview.add_row(
+        "Dry run",
+        (
+            "[yellow]Yes[/yellow]"
+            if result_data["dry_run"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "Changes",
+        (
+            "[yellow]Yes[/yellow]"
+            if plan["has_changes"]
+            else "[green]No[/green]"
+        ),
+    )
+    overview.add_row(
+        "Filesystem changes",
+        (
+            "[yellow]Yes[/yellow]"
+            if plan["has_filesystem_changes"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "Conflicts",
+        (
+            f"[red]{len(conflicts)}[/red]"
+            if conflicts
+            else "[green]0[/green]"
+        ),
+    )
+    overview.add_row(
+        "Ready",
+        (
+            "[green]Yes[/green]"
+            if result_data["ready"]
+            else "[red]No[/red]"
+        ),
+    )
+    overview.add_row(
+        "Applied",
+        (
+            "[green]Yes[/green]"
+            if result_data["applied"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "Pending transaction",
+        (
+            "[yellow]Yes[/yellow]"
+            if result_data["pending_transaction"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "State",
+        escape(
+            shorten_path(
+                result_data["state_path"]
+            )
+        ),
+    )
+
+    if conflicts:
+        border_style = "red"
+    elif result_data["dry_run"]:
+        border_style = "cyan"
+    else:
+        border_style = "green"
+
+    render_section(
+        overview,
+        "Boilr project update",
+        border_style=border_style,
+    )
+
+    counters = Table.grid(padding=(0, 4))
+    counters.add_column(style="bold")
+    counters.add_column(justify="right")
+
+    for key, value in summary.items():
+        counters.add_row(
+            _status_label(key),
+            str(value),
+        )
+
+    render_section(
+        counters,
+        "Update summary",
+    )
+
+    if conflicts:
+        conflict_table = Table(
+            show_header=True,
+            header_style="bold red",
+        )
+        conflict_table.add_column("Resource")
+        conflict_table.add_column("Reason")
+        conflict_table.add_column("Path")
+        conflict_table.add_column("Observed as")
+
+        for conflict in conflicts:
+            conflict_table.add_row(
+                escape(conflict["resource_id"]),
+                escape(conflict["reason"]),
+                escape(conflict["path"]),
+                escape(
+                    conflict["observed_status"]
+                    or "-"
+                ),
+            )
+
+        render_section(
+            conflict_table,
+            "Update conflicts",
+            border_style="red",
+        )
+
+    if not show_details:
+        console.print(
+            "[dim]Run with --info to show resource "
+            "transitions and filesystem operations.[/dim]"
+        )
+        return
+
+    changes = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    changes.add_column("Action")
+    changes.add_column("Resource")
+    changes.add_column("Current path")
+    changes.add_column("Target path")
+    changes.add_column("Observed as")
+    changes.add_column("Changed fields")
+
+    action_styles = {
+        "create": "green",
+        "replace": "yellow",
+        "remove": "red",
+        "retain": "dim",
+        "relocate": "cyan",
+        "forget": "magenta",
+    }
+
+    for change in plan["changes"]:
+        action = change["action"]
+        style = action_styles.get(
+            action,
+            "white",
+        )
+        changed_fields = (
+            ", ".join(
+                change["changed_fields"]
+            )
+            if change["changed_fields"]
+            else "-"
+        )
+
+        changes.add_row(
+            f"[{style}]{escape(action)}[/]",
+            escape(change["resource_id"]),
+            escape(
+                change["current_path"] or "-"
+            ),
+            escape(
+                change["target_path"] or "-"
+            ),
+            escape(
+                change["observed_status"] or "-"
+            ),
+            escape(changed_fields),
+        )
+
+    render_section(
+        changes,
+        "Resource transitions",
+    )
+
+    execution_plan = plan["execution_plan"]
+
+    if execution_plan is None:
+        return
+
+    render_filesystem_operations(
+        execution_plan
+    )
+    render_files_tree(
+        execution_plan["files"]
+    )
+
 @app.command()
 def dry_run(
     manifest_path: Annotated[
@@ -1147,6 +1405,200 @@ def reconcile(
             ),
         }
         render_reconciliation_error(
+            error_data,
+            json_output=json_output,
+        )
+        raise typer.Exit(code=1) from None
+
+@app.command()
+def update(
+    manifest_path: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Project manifest describing the desired "
+                "configuration."
+            ),
+        ),
+    ],
+    output_path: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Generated project directory to update."
+            ),
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Plan and display the update without "
+                "modifying project files or state."
+            ),
+        ),
+    ] = False,
+    info: Annotated[
+        bool,
+        typer.Option(
+            "--info",
+            help=(
+                "Show resource transitions and exact "
+                "filesystem operations."
+            ),
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Print the complete project update plan "
+                "as JSON."
+            ),
+        ),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--debug",
+            help=(
+                "Show the complete traceback when an "
+                "error occurs."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Safely update a generated project from its manifest."""
+    try:
+        manifest = load_project_manifest_from_yaml(
+            str(manifest_path)
+        )
+        storage = ProjectStateStorage(output_path)
+        current_state = storage.read()
+
+        if current_state is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "No committed Boilr project state "
+                    "was found."
+                ),
+                "output_path": str(output_path),
+                "suggestion": (
+                    "Run 'boilr generate' before updating "
+                    "the project."
+                ),
+            }
+            render_update_error(
+                error_data,
+                json_output=json_output,
+            )
+            raise typer.Exit(code=1)
+
+        generator = build_generator()
+        candidate_plan = generator.plan(
+            manifest=manifest,
+            output_path=output_path,
+            clean=False,
+        )
+        observation = observe_project(
+            output_path
+        )
+
+        if observation is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "The committed Boilr project state "
+                    "could not be observed."
+                ),
+                "output_path": str(output_path),
+                "suggestion": (
+                    "Run 'boilr status' and inspect the "
+                    "project state before retrying."
+                ),
+            }
+            render_update_error(
+                error_data,
+                json_output=json_output,
+            )
+            raise typer.Exit(code=1)
+
+        update_plan = build_project_update_plan(
+            candidate_plan,
+            current_state,
+            observation,
+        )
+        pending_path = (
+            storage.pending_state_path
+        )
+        pending_transaction = (
+            pending_path.exists()
+            or pending_path.is_symlink()
+        )
+        ready = (
+            update_plan.can_execute
+            and not pending_transaction
+        )
+
+        if dry_run:
+            applied = False
+        else:
+            generator.execute_update(
+                update_plan
+            )
+            applied = update_plan.has_changes
+
+        result_data = {
+            "output_path": str(output_path),
+            "state_path": str(
+                storage.state_path
+            ),
+            "dry_run": dry_run,
+            "ready": ready,
+            "applied": applied,
+            "pending_transaction": (
+                pending_transaction
+            ),
+            "plan": update_plan.to_dict(),
+        }
+
+        if json_output:
+            console.print_json(
+                data=result_data
+            )
+            return
+
+        render_update_result(
+            result_data,
+            show_details=info,
+        )
+    except BoilrError as error:
+        if debug:
+            raise
+
+        if json_output:
+            render_boilr_error_json(error)
+        else:
+            render_boilr_error(error)
+
+        raise typer.Exit(code=1) from None
+    except ValueError as error:
+        if debug:
+            raise
+
+        error_data = {
+            "code": "invalid_update_request",
+            "message": str(error),
+            "output_path": str(output_path),
+            "suggestion": (
+                "Inspect the manifest and run "
+                "'boilr status --json' before retrying."
+            ),
+        }
+        render_update_error(
             error_data,
             json_output=json_output,
         )
