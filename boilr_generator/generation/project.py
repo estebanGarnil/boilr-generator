@@ -52,6 +52,9 @@ from boilr_generator.state.storage import (
     STATE_DIRECTORY_NAME,
     ProjectStateStorage,
 )
+from boilr_generator.generation.update import (
+    plan_empty_container_removals,
+)
 
 class ProjectGenerator:
     """Plan and execute project generation."""
@@ -819,8 +822,9 @@ class ProjectGenerator:
             for resource
             in update_plan.desired_state.resources
         }
-        expected_removals: list[
-            tuple[str, str, str | None, str]
+        output_path = execution_plan.output_path
+        expected_resource_removals: list[
+            PlannedRemoval
         ] = []
 
         for change in update_plan.changes:
@@ -830,8 +834,10 @@ class ProjectGenerator:
             }:
                 continue
 
-            current_resource = current_resources.get(
-                change.resource_id
+            current_resource = (
+                current_resources.get(
+                    change.resource_id
+                )
             )
 
             if (
@@ -844,15 +850,47 @@ class ProjectGenerator:
                 )
                 continue
 
-            expected_removals.append(
-                (
-                    change.current_path,
-                    current_resource.kind,
-                    current_resource.owner,
-                    "replace",
+            expected_resource_removals.append(
+                PlannedRemoval(
+                    path=output_path.joinpath(
+                        *PurePosixPath(
+                            change.current_path
+                        ).parts
+                    ),
+                    relative_path=(
+                        change.current_path
+                    ),
+                    kind=current_resource.kind,
+                    module=current_resource.owner,
+                    reason="replace",
                 )
             )
 
+        expected_planned_removals = (
+            plan_empty_container_removals(
+                initial_output_state=(
+                    candidate_plan
+                    .initial_output_state
+                ),
+                removals=(
+                    expected_resource_removals
+                ),
+                desired_state=(
+                    update_plan.desired_state
+                ),
+            )
+        )
+
+        expected_removals = [
+            (
+                removal.relative_path,
+                removal.kind,
+                removal.module,
+                removal.reason,
+            )
+            for removal
+            in expected_planned_removals
+        ]
         actual_removals = [
             (
                 removal.relative_path,
@@ -860,7 +898,8 @@ class ProjectGenerator:
                 removal.module,
                 removal.reason,
             )
-            for removal in execution_plan.removals
+            for removal
+            in execution_plan.removals
         ]
 
         expected_removals.sort(

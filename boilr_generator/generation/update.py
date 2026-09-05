@@ -471,6 +471,139 @@ def _materialize_update_operations(
 
     return files, removals
 
+def plan_empty_container_removals(
+    *,
+    initial_output_state: list[PlannedPathState],
+    removals: list[PlannedRemoval],
+    desired_state: ProjectState,
+) -> list[PlannedRemoval]:
+    """Remove obsolete resource containers only when empty."""
+    planned_removals = list(removals)
+    removals_by_path = {
+        PurePosixPath(removal.relative_path):
+            removal
+        for removal in planned_removals
+    }
+    states_by_path = {
+        PurePosixPath(state.relative_path):
+            state
+        for state in initial_output_state
+        if (
+            state.exists
+            and state.relative_path != "."
+        )
+    }
+    desired_paths = {
+        PurePosixPath(
+            resource.materialized_path
+        )
+        for resource in desired_state.resources
+    }
+    candidate_modules: dict[
+        PurePosixPath,
+        set[str | None],
+    ] = {}
+
+    for removal in removals:
+        removed_path = PurePosixPath(
+            removal.relative_path
+        )
+
+        for parent in removed_path.parents:
+            if parent == PurePosixPath("."):
+                break
+
+            candidate_modules.setdefault(
+                parent,
+                set(),
+            ).add(removal.module)
+
+    ordered_candidates = sorted(
+        candidate_modules,
+        key=lambda path: (
+            -len(path.parts),
+            path.as_posix(),
+        ),
+    )
+
+    for directory_path in ordered_candidates:
+        state = states_by_path.get(
+            directory_path
+        )
+
+        if (
+            state is None
+            or state.kind != "directory"
+        ):
+            continue
+
+        remains_required = any(
+            desired_path == directory_path
+            or directory_path
+            in desired_path.parents
+            for desired_path in desired_paths
+        )
+
+        if remains_required:
+            continue
+
+        descendants = {
+            path
+            for path in states_by_path
+            if (
+                path != directory_path
+                and directory_path in path.parents
+            )
+        }
+
+        if any(
+            path not in removals_by_path
+            for path in descendants
+        ):
+            continue
+
+        modules = {
+            module
+            for module
+            in candidate_modules[directory_path]
+            if module is not None
+        }
+        module = (
+            next(iter(modules))
+            if len(modules) == 1
+            else None
+        )
+
+        directory_removal = PlannedRemoval(
+            path=state.path,
+            relative_path=(
+                directory_path.as_posix()
+            ),
+            kind="directory",
+            module=module,
+            reason="replace",
+        )
+
+        planned_removals.append(
+            directory_removal
+        )
+        removals_by_path[directory_path] = (
+            directory_removal
+        )
+
+    planned_removals.sort(
+        key=lambda removal: (
+            -len(
+                PurePosixPath(
+                    removal.relative_path
+                ).parts
+            ),
+            removal.relative_path,
+        )
+    )
+
+    return planned_removals
+
 
 def _plan_update_directories(
     *,
@@ -627,6 +760,13 @@ def _materialize_update_execution_plan(
             desired_state=desired_state,
             files_by_id=files_by_id,
         )
+    )
+    removals = plan_empty_container_removals(
+        initial_output_state=(
+            candidate_plan.initial_output_state
+        ),
+        removals=removals,
+        desired_state=desired_state,
     )
     directories, conflicts = (
         _plan_update_directories(
