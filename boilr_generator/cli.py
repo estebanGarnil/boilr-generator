@@ -811,7 +811,20 @@ def render_update_result(
     """Render one project update result for humans."""
     plan = result_data["plan"]
     summary = plan["summary"]
-    conflicts = plan["conflicts"]
+    resource_conflicts = plan["conflicts"]
+    module_transitions = plan[
+        "module_transitions"
+    ]
+    module_summary = module_transitions[
+        "summary"
+    ]
+    module_conflicts = module_transitions[
+        "conflicts"
+    ]
+    total_conflicts = (
+        len(resource_conflicts)
+        + len(module_conflicts)
+    )
 
     overview = Table.grid(padding=(0, 2))
     overview.add_column(style="bold")
@@ -842,6 +855,16 @@ def render_update_result(
         ),
     )
     overview.add_row(
+        "Module changes",
+        (
+            "[yellow]Yes[/yellow]"
+            if module_transitions[
+                "has_changes"
+            ]
+            else "[green]No[/green]"
+        ),
+    )
+    overview.add_row(
         "Filesystem changes",
         (
             "[yellow]Yes[/yellow]"
@@ -852,8 +875,8 @@ def render_update_result(
     overview.add_row(
         "Conflicts",
         (
-            f"[red]{len(conflicts)}[/red]"
-            if conflicts
+            f"[red]{total_conflicts}[/red]"
+            if total_conflicts
             else "[green]0[/green]"
         ),
     )
@@ -890,7 +913,7 @@ def render_update_result(
         ),
     )
 
-    if conflicts:
+    if total_conflicts:
         border_style = "red"
     elif result_data["dry_run"]:
         border_style = "cyan"
@@ -918,7 +941,26 @@ def render_update_result(
         "Update summary",
     )
 
-    if conflicts:
+    module_counters = Table.grid(
+        padding=(0, 4)
+    )
+    module_counters.add_column(style="bold")
+    module_counters.add_column(
+        justify="right"
+    )
+
+    for key, value in module_summary.items():
+        module_counters.add_row(
+            _status_label(key),
+            str(value),
+        )
+
+    render_section(
+        module_counters,
+        "Module transition summary",
+    )
+
+    if resource_conflicts:
         conflict_table = Table(
             show_header=True,
             header_style="bold red",
@@ -926,15 +968,21 @@ def render_update_result(
         conflict_table.add_column("Resource")
         conflict_table.add_column("Reason")
         conflict_table.add_column("Path")
-        conflict_table.add_column("Observed as")
+        conflict_table.add_column(
+            "Observed as"
+        )
 
-        for conflict in conflicts:
+        for conflict in resource_conflicts:
             conflict_table.add_row(
-                escape(conflict["resource_id"]),
+                escape(
+                    conflict["resource_id"]
+                ),
                 escape(conflict["reason"]),
                 escape(conflict["path"]),
                 escape(
-                    conflict["observed_status"]
+                    conflict[
+                        "observed_status"
+                    ]
                     or "-"
                 ),
             )
@@ -945,12 +993,216 @@ def render_update_result(
             border_style="red",
         )
 
+    if module_conflicts:
+        module_conflict_table = Table(
+            show_header=True,
+            header_style="bold red",
+        )
+        module_conflict_table.add_column(
+            "Reason"
+        )
+        module_conflict_table.add_column(
+            "Modules"
+        )
+
+        for conflict in module_conflicts:
+            module_conflict_table.add_row(
+                escape(
+                    _status_label(
+                        conflict["reason"]
+                    )
+                ),
+                escape(
+                    ", ".join(
+                        conflict[
+                            "module_keys"
+                        ]
+                    )
+                ),
+            )
+
+        render_section(
+            module_conflict_table,
+            "Module conflicts",
+            border_style="red",
+        )
+
     if not show_details:
         console.print(
-            "[dim]Run with --info to show resource "
-            "transitions and filesystem operations.[/dim]"
+            "[dim]Run with --info to show module and "
+            "resource transitions and filesystem "
+            "operations.[/dim]"
         )
         return
+
+    module_changes = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    module_changes.add_column(
+        "Action",
+        no_wrap=True,
+    )
+    module_changes.add_column(
+        "Module",
+        no_wrap=True,
+    )
+    module_changes.add_column(
+        "Details",
+        overflow="fold",
+    )
+
+    module_action_styles = {
+        "add": "green",
+        "update": "yellow",
+        "retain": "dim",
+        "remove": "red",
+    }
+
+    for transition in module_transitions[
+        "modules"
+    ]:
+        action = transition["action"]
+        style = module_action_styles.get(
+            action,
+            "white",
+        )
+        changed_fields = (
+            ", ".join(
+                transition[
+                    "changed_fields"
+                ]
+            )
+            if transition["changed_fields"]
+            else "-"
+        )
+        details = (
+            "Version: "
+            f"{transition['current_version'] or '-'}"
+            " -> "
+            f"{transition['target_version'] or '-'}"
+            "\nChanged fields: "
+            f"{changed_fields}"
+        )
+
+        module_changes.add_row(
+            f"[{style}]{escape(action)}[/]",
+            escape(
+                transition["module_key"]
+            ),
+            escape(details),
+        )
+
+    render_section(
+        module_changes,
+        "Module transitions",
+    )
+
+    render_section(
+        module_changes,
+        "Module transitions",
+    )
+
+    binding_changes = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    binding_changes.add_column("Action")
+    binding_changes.add_column("Consumer")
+    binding_changes.add_column("Binding")
+    binding_changes.add_column(
+        "Current provider"
+    )
+    binding_changes.add_column(
+        "Target provider"
+    )
+    binding_changes.add_column(
+        "Changed fields"
+    )
+
+    for transition in module_transitions[
+        "bindings"
+    ]:
+        action = transition["action"]
+        style = module_action_styles.get(
+            action,
+            "white",
+        )
+        changed_fields = (
+            ", ".join(
+                transition[
+                    "changed_fields"
+                ]
+            )
+            if transition["changed_fields"]
+            else "-"
+        )
+
+        binding_changes.add_row(
+            f"[{style}]{escape(action)}[/]",
+            escape(
+                transition[
+                    "consumer_module"
+                ]
+            ),
+            escape(
+                transition["binding"]
+            ),
+            escape(
+                transition[
+                    "current_provider_module"
+                ]
+                or "-"
+            ),
+            escape(
+                transition[
+                    "target_provider_module"
+                ]
+                or "-"
+            ),
+            escape(changed_fields),
+        )
+
+    render_section(
+        binding_changes,
+        "Capability binding transitions",
+    )
+
+    lifecycle_order = Table.grid(
+        padding=(0, 2)
+    )
+    lifecycle_order.add_column(
+        style="bold"
+    )
+    lifecycle_order.add_column()
+
+    lifecycle_order.add_row(
+        "Activation order",
+        escape(
+            " -> ".join(
+                module_transitions[
+                    "activation_order"
+                ]
+            )
+            or "-"
+        ),
+    )
+    lifecycle_order.add_row(
+        "Removal order",
+        escape(
+            " -> ".join(
+                module_transitions[
+                    "removal_order"
+                ]
+            )
+            or "-"
+        ),
+    )
+
+    render_section(
+        lifecycle_order,
+        "Module lifecycle order",
+    )
 
     changes = Table(
         show_header=True,
@@ -996,7 +1248,8 @@ def render_update_result(
                 change["target_path"] or "-"
             ),
             escape(
-                change["observed_status"] or "-"
+                change["observed_status"]
+                or "-"
             ),
             escape(changed_fields),
         )

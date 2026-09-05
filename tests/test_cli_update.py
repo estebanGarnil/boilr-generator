@@ -10,6 +10,10 @@ from boilr_generator.generation import (
     ProjectGenerator,
 )
 from boilr_generator.state import ProjectStateStorage
+from boilr_generator.state.schemas import (
+    ProjectState,
+    StateBinding,
+)
 
 runner = CliRunner()
 
@@ -121,6 +125,135 @@ def _configure_environment_update(
         generator,
         "plan",
         plan_with_updated_environment,
+    )
+
+
+def _configure_module_metadata_update(
+    monkeypatch,
+    generator,
+) -> None:
+    original_plan = generator.plan
+
+    def plan_with_updated_module(
+        *args,
+        **kwargs,
+    ):
+        candidate_plan = original_plan(
+            *args,
+            **kwargs,
+        )
+        state_data = (
+            candidate_plan
+            .desired_state
+            .model_dump(mode="python")
+        )
+        current_fingerprint = (
+            state_data["modules"][0][
+                "manifest_sha256"
+            ]
+        )
+
+        state_data["modules"][0][
+            "manifest_sha256"
+        ] = (
+            "0" * 64
+            if current_fingerprint
+            != "0" * 64
+            else "f" * 64
+        )
+
+        candidate_plan.desired_state = (
+            ProjectState.model_validate(
+                state_data
+            )
+        )
+
+        return candidate_plan
+
+    monkeypatch.setattr(
+        generator,
+        "plan",
+        plan_with_updated_module,
+    )
+
+
+def _configure_module_cycle(
+    monkeypatch,
+    generator,
+) -> None:
+    original_plan = generator.plan
+
+    def plan_with_module_cycle(
+        *args,
+        **kwargs,
+    ):
+        candidate_plan = original_plan(
+            *args,
+            **kwargs,
+        )
+        binding = (
+            candidate_plan
+            .resolved_project
+            .bindings[0]
+        )
+        reverse_binding = binding.model_copy(
+            update={
+                "binding_key": (
+                    f"{binding.binding_key}"
+                    "-cli-cycle"
+                ),
+                "consumer_module_key": (
+                    binding.provider_module_key
+                ),
+                "provider_module_key": (
+                    binding.consumer_module_key
+                ),
+            }
+        )
+
+        candidate_plan.resolved_project.bindings.append(
+            reverse_binding
+        )
+
+        state_data = (
+            candidate_plan
+            .desired_state
+            .model_dump(mode="python")
+        )
+        state_data["bindings"] = list(
+            state_data["bindings"]
+        )
+        state_data["bindings"].append(
+            StateBinding(
+                consumer_module=(
+                    reverse_binding
+                    .consumer_module_key
+                ),
+                binding=(
+                    reverse_binding.binding_key
+                ),
+                capability=(
+                    reverse_binding.capability
+                ),
+                provider_module=(
+                    reverse_binding
+                    .provider_module_key
+                ),
+            ).model_dump(mode="python")
+        )
+
+        candidate_plan.desired_state = (
+            ProjectState.model_validate(
+                state_data
+            )
+        )
+
+        return candidate_plan
+
+    monkeypatch.setattr(
+        generator,
+        "plan",
+        plan_with_module_cycle,
     )
 
 
@@ -645,4 +778,242 @@ def test_update_pending_application_is_rejected(
     )
     assert storage.read() == current_state
     assert storage.read_pending() == current_state
+    assert _snapshot_output(output_path) == before
+
+def test_update_json_exposes_module_transitions_read_only(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+
+    generator, storage, current_state = (
+        _generated_project(
+            registry,
+            manifest,
+            output_path,
+        )
+    )
+    module_key = current_state.modules[0].key
+
+    _configure_cli(
+        monkeypatch,
+        generator,
+        manifest,
+    )
+    _configure_module_metadata_update(
+        monkeypatch,
+        generator,
+    )
+
+    before = _snapshot_output(output_path)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "update",
+            str(tmp_path / "project.yml"),
+            str(output_path),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+
+    data = json.loads(result.output)
+    module_plan = data["plan"][
+        "module_transitions"
+    ]
+    updated_modules = [
+        transition
+        for transition
+        in module_plan["modules"]
+        if transition["action"] == "update"
+    ]
+
+    assert module_plan["has_changes"] is True
+    assert module_plan["can_execute"] is True
+    assert module_plan["summary"][
+        "modules_to_update"
+    ] == 1
+    assert updated_modules == [
+        {
+            "module_key": module_key,
+            "action": "update",
+            "current_version": "1.0.0",
+            "target_version": "1.0.0",
+            "changed_fields": [
+                "manifest_sha256"
+            ],
+        }
+    ]
+    assert module_plan[
+        "activation_order"
+    ] == [module_key]
+    assert module_plan[
+        "removal_order"
+    ] == []
+    assert data["ready"] is True
+    assert data["applied"] is False
+    assert data["plan"][
+        "has_filesystem_changes"
+    ] is False
+    assert storage.read() == current_state
+    assert not storage.pending_state_path.exists()
+    assert _snapshot_output(output_path) == before
+
+
+def test_update_human_output_describes_module_transitions(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+
+    generator, storage, current_state = (
+        _generated_project(
+            registry,
+            manifest,
+            output_path,
+        )
+    )
+    module_key = current_state.modules[0].key
+
+    _configure_cli(
+        monkeypatch,
+        generator,
+        manifest,
+    )
+    _configure_module_metadata_update(
+        monkeypatch,
+        generator,
+    )
+
+    before = _snapshot_output(output_path)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "update",
+            str(tmp_path / "project.yml"),
+            str(output_path),
+            "--dry-run",
+            "--info",
+        ],
+    )
+
+    plain_output = Text.from_ansi(
+        result.output
+    ).plain
+
+    assert result.exit_code == 0, result.output
+    assert "Boilr project update" in plain_output
+    assert "Module changes" in plain_output
+    assert "Module transition summary" in plain_output
+    assert "Modules to update" in plain_output
+    assert "Module transitions" in plain_output
+    assert module_key in plain_output
+    assert "update" in plain_output
+    assert "manifest_sha256" in plain_output
+    assert (
+        "Capability binding transitions"
+        in plain_output
+    )
+    assert "Module lifecycle order" in plain_output
+    assert "Activation order" in plain_output
+    assert storage.read() == current_state
+    assert not storage.pending_state_path.exists()
+    assert _snapshot_output(output_path) == before
+
+
+def test_update_cli_reports_module_cycle_without_writes(
+    registry,
+    manifest,
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "output"
+
+    generator, storage, current_state = (
+        _generated_project(
+            registry,
+            manifest,
+            output_path,
+        )
+    )
+    binding = current_state.bindings[0]
+
+    _configure_cli(
+        monkeypatch,
+        generator,
+        manifest,
+    )
+    _configure_module_cycle(
+        monkeypatch,
+        generator,
+    )
+
+    before = _snapshot_output(output_path)
+
+    human_result = runner.invoke(
+        cli.app,
+        [
+            "update",
+            str(tmp_path / "project.yml"),
+            str(output_path),
+            "--dry-run",
+            "--info",
+        ],
+    )
+    plain_output = Text.from_ansi(
+        human_result.output
+    ).plain
+
+    assert human_result.exit_code == 0
+    assert "Module conflicts" in plain_output
+    assert "Candidate cycle" in plain_output
+    assert (
+        binding.consumer_module
+        in plain_output
+    )
+    assert (
+        binding.provider_module
+        in plain_output
+    )
+    assert "Ready" in plain_output
+    assert "No" in plain_output
+    assert _snapshot_output(output_path) == before
+
+    json_result = runner.invoke(
+        cli.app,
+        [
+            "update",
+            str(tmp_path / "project.yml"),
+            str(output_path),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert json_result.exit_code == 0
+
+    data = json.loads(json_result.output)
+    module_plan = data["plan"][
+        "module_transitions"
+    ]
+
+    assert data["ready"] is False
+    assert data["applied"] is False
+    assert data["plan"]["can_execute"] is False
+    assert data["plan"]["execution_plan"] is None
+    assert data["plan"]["conflicts"] == []
+    assert module_plan["can_execute"] is False
+    assert module_plan["conflicts"][0][
+        "reason"
+    ] == "candidate_cycle"
+    assert storage.read() == current_state
+    assert not storage.pending_state_path.exists()
     assert _snapshot_output(output_path) == before
