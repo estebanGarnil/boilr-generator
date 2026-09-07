@@ -19,6 +19,13 @@ Instead of maintaining one template for every technology combination, Boilr comp
 - Typed extension points and contributions
 - Complete generation plans before filesystem mutation
 - Immutable dry runs with human-readable and JSON output
+- Deterministic project state persisted in `.boilr/state.json`
+- Read-only filesystem drift inspection
+- Explicit reconciliation of detected resource moves
+- Safe state-aware project updates with dry-run support
+- Module addition, update, retention, and removal planning
+- Dependency-aware module lifecycle ordering
+- Atomic state transactions with interrupted-operation detection
 - Create, overwrite, skip, clean, and replace operations
 - SHA-256 fingerprints and content sizes for planned files
 - Safe path boundaries and structured diagnostics
@@ -267,7 +274,10 @@ Available commands:
 | Command | Description |
 | --- | --- |
 | `dry-run` | Build and display a generation plan without mutating the output |
-| `generate` | Build a plan and execute it |
+| `generate` | Generate a project and persist its initial state |
+| `status` | Inspect project drift without modifying files or state |
+| `reconcile` | Explicitly accept detected resource moves into the state |
+| `update` | Safely apply manifest, resource, and module changes |
 
 ### Preview a generation
 
@@ -311,6 +321,78 @@ Example:
 ~~~bash
 boilr generate project.yml generated-project --clean --info
 ~~~
+
+### Inspect a generated project
+
+Inspect tracked resources without modifying the project:
+
+~~~bash
+boilr status generated-project
+~~~
+
+Request the complete observation as JSON:
+
+~~~bash
+boilr status generated-project --json
+~~~
+
+### Reconcile a detected move
+
+Inspect possible resource moves first:
+
+~~~bash
+boilr status generated-project --json
+~~~
+
+Preview explicit acceptance of a move:
+
+~~~bash
+boilr reconcile generated-project \
+  --accept-move RESOURCE_ID=NEW_PATH \
+  --dry-run \
+  --json
+~~~
+
+Apply the reconciliation:
+
+~~~bash
+boilr reconcile generated-project \
+  --accept-move RESOURCE_ID=NEW_PATH
+~~~
+
+Reconciliation updates only `.boilr/state.json`. It does not move or rewrite
+project files.
+
+### Update a generated project
+
+After changing `project.yml`, preview the state-aware update:
+
+~~~bash
+boilr update project.yml generated-project --dry-run --info
+~~~
+
+Request the complete update contract:
+
+~~~bash
+boilr update project.yml generated-project --dry-run --json
+~~~
+
+Apply the update:
+
+~~~bash
+boilr update project.yml generated-project --info
+~~~
+
+Updates compare the committed state, the observed filesystem, and the newly
+desired project. Modified tracked resources, untracked destinations,
+unresolved moves, dependency cycles, and stale plans block execution.
+
+Module additions and removals are planned from the complete manifest.
+Unchanged generated resources may be safely removed, while user-created files
+and non-empty containing directories are preserved.
+
+See [Generated project lifecycle](docs/project-lifecycle.md) for the complete
+state, transaction, reconciliation, and safety contract.
 
 ## Dry-run JSON contract
 
@@ -721,6 +803,12 @@ The current engine supports:
 - safe plan execution
 - Dockerized Django, PostgreSQL, and Redis generation
 - cross-platform CI and distribution verification
+- deterministic generated-project state
+- read-only drift observation
+- explicit resource-move reconciliation
+- safe state-aware project updates
+- dependency-aware module lifecycle transitions
+- atomic state transactions
 
 Potential future work includes:
 
