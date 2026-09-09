@@ -6,8 +6,8 @@ from boilr_generator.state.builder import (
 from boilr_generator.state.observation import (
     ProjectObservation,
     TrackedResourceObservation,
-    classify_tracked_resources,
     UntrackedResourceObservation,
+    classify_tracked_resources,
 )
 from boilr_generator.state.reconciliation import (
     ReconciliationMove,

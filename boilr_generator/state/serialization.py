@@ -21,7 +21,7 @@ def serialize_project_state(
         indent=2,
     )
 
-    return f"{serialized}\n".encode("utf-8")
+    return f"{serialized}\n".encode()
 
 
 def deserialize_project_state(

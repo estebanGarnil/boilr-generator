@@ -1,6 +1,7 @@
 """Generation planning models."""
 
 from __future__ import annotations
+
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from boilr_generator.core.project import ResolvedProject
 from boilr_generator.state.schemas import ProjectState
+
 if TYPE_CHECKING:
     from boilr_generator.generation.module_update import (
         ProjectModuleTransitionPlan,

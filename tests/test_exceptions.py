@@ -18,12 +18,12 @@ from boilr_generator.exceptions import (
     ProviderSelectionError,
     SourceReadError,
     StaleGenerationPlanError,
+    StateTransactionError,
     TemplateRenderError,
     UnknownOptionError,
     UnknownVariableError,
     UnsafePathError,
     UnsupportedFilesystemEntryError,
-    StateTransactionError,
 )
 
 

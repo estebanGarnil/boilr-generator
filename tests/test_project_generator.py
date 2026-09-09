@@ -16,8 +16,8 @@ from boilr_generator.exceptions import (
     SourceNotFoundError,
     SourceReadError,
     StaleGenerationPlanError,
-    UnsafePathError,
     StateTransactionError,
+    UnsafePathError,
 )
 from boilr_generator.generation import ProjectGenerator
 from boilr_generator.generation.filesystem import (

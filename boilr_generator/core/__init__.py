@@ -34,10 +34,10 @@ __all__ = [
     "DependencyGraph",
     "ExtensionPoint",
     "ExtensionPointValue",
-    "ResolvedModule",
-    "ResolvedProject",
     "ModuleLifecycleNode",
     "ModuleLifecycleRelation",
     "ProjectModuleLifecycleGraph",
+    "ResolvedModule",
+    "ResolvedProject",
     "build_project_module_lifecycle_graph",
 ]

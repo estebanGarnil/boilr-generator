@@ -17,8 +17,8 @@ from boilr_generator.state import (
     StateProject,
     StateResource,
     TrackedResourceObservation,
-    classify_tracked_resources,
     UntrackedResourceObservation,
+    classify_tracked_resources,
 )
 
 FINGERPRINT_A = "a" * 64

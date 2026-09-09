@@ -5,7 +5,7 @@ from pathlib import Path
 from rich.text import Text
 from typer.testing import CliRunner
 
-import boilr_generator.cli as cli
+from boilr_generator import cli
 from boilr_generator.generation import (
     ProjectGenerator,
 )
@@ -266,12 +266,16 @@ def test_update_help_exposes_safe_update_options():
         ],
     )
 
+    plain_output = Text.from_ansi(
+        result.output
+    ).plain
+
     assert result.exit_code == 0
-    assert "--dry-run" in result.output
-    assert "--info" in result.output
-    assert "--json" in result.output
-    assert "--debug" in result.output
-    assert "--clean" not in result.output
+    assert "--dry-run" in plain_output
+    assert "--info" in plain_output
+    assert "--json" in plain_output
+    assert "--debug" in plain_output
+    assert "--clean" not in plain_output
 
 
 def test_update_dry_run_json_is_strictly_read_only(

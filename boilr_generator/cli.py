@@ -19,13 +19,13 @@ from boilr_generator.generation import (
     build_project_update_plan,
     observe_project,
 )
+from boilr_generator.manifest import load_project_manifest_from_yaml
+from boilr_generator.modules.registry import ModuleRegistry
+from boilr_generator.paths import get_builtin_modules_path
 from boilr_generator.state import (
     ProjectStateStorage,
     build_reconciliation_plan,
 )
-from boilr_generator.manifest import load_project_manifest_from_yaml
-from boilr_generator.modules.registry import ModuleRegistry
-from boilr_generator.paths import get_builtin_modules_path
 
 app = typer.Typer(
     no_args_is_help=True,

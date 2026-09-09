@@ -5,7 +5,7 @@ import pytest
 from rich.text import Text
 from typer.testing import CliRunner
 
-import boilr_generator.cli as cli
+from boilr_generator import cli
 from boilr_generator.generation import (
     ProjectGenerator,
     observe_project,
@@ -121,12 +121,14 @@ def test_reconcile_help_exposes_explicit_move_options():
             "--help",
         ],
     )
+    plain_output = Text.from_ansi(
+        result.output
+    ).plain
 
     assert result.exit_code == 0
-    assert "--accept-move" in result.output
-    assert "--dry-run" in result.output
-    assert "--json" in result.output
-
+    assert "--accept-move" in plain_output
+    assert "--dry-run" in plain_output
+    assert "--json" in plain_output
 
 def test_reconcile_dry_run_json_is_read_only(
     registry,

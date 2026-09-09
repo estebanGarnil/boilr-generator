@@ -5,7 +5,6 @@ from pydantic import ValidationError
 
 from boilr_generator.state import ProjectState
 
-
 FINGERPRINT = "a" * 64
 
 

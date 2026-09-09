@@ -99,7 +99,7 @@ def test_status_command_options_are_available():
     assert result.exit_code == 0
     assert "--json" in plain_output
     assert "--debug" in plain_output
-    assert "OUTPUT_PATH" in plain_output
+    assert "[output_path]" in plain_output.lower()
 
 
 def test_status_json_is_exhaustive_and_read_only(

@@ -15,7 +15,6 @@ from boilr_generator.state import (
     serialize_project_state,
 )
 
-
 FINGERPRINT = "a" * 64
 
 
@@ -122,7 +121,7 @@ def test_serialize_project_state_uses_readable_utf8():
         _project_state()
     )
 
-    assert "café".encode("utf-8") in serialized
+    assert "café".encode() in serialized
     assert b"\\u00e9" not in serialized
 
 
@@ -261,7 +260,6 @@ modules:
 
 def test_state_public_api_exports_storage():
     import boilr_generator.state as state_package
-
     from boilr_generator.state.storage import (
         ProjectStateStorage,
     )

@@ -5,11 +5,11 @@ from pathlib import Path, PurePosixPath
 from boilr_generator.core.generation_plan import (
     GenerationPlan,
 )
+from boilr_generator.core.project import ResolvedProject
+from boilr_generator.generation import ProjectGenerator
 from boilr_generator.state.storage import (
     STATE_DIRECTORY_NAME,
 )
-from boilr_generator.core.project import ResolvedProject
-from boilr_generator.generation import ProjectGenerator
 
 FilesystemEntry = tuple[
     str,

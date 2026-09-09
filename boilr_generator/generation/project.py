@@ -22,8 +22,8 @@ from boilr_generator.exceptions import (
     SourceNotFoundError,
     SourceReadError,
     StaleGenerationPlanError,
-    UnsafePathError,
     StateTransactionError,
+    UnsafePathError,
 )
 from boilr_generator.generation.context import (
     build_module_context,
@@ -35,6 +35,9 @@ from boilr_generator.generation.filesystem import (
     capture_output_state,
     find_changed_output_paths,
     is_reserved_state_path,
+)
+from boilr_generator.generation.update import (
+    plan_empty_container_removals,
 )
 from boilr_generator.manifest.schemas import ProjectManifest
 from boilr_generator.modules.registry import ModuleRegistry
@@ -52,9 +55,7 @@ from boilr_generator.state.storage import (
     STATE_DIRECTORY_NAME,
     ProjectStateStorage,
 )
-from boilr_generator.generation.update import (
-    plan_empty_container_removals,
-)
+
 
 class ProjectGenerator:
     """Plan and execute project generation."""

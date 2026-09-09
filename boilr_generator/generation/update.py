@@ -14,6 +14,9 @@ from boilr_generator.core.generation_plan import (
     ProjectUpdatePlan,
     UpdateConflictReason,
 )
+from boilr_generator.generation.module_update import (
+    build_project_module_transition_plan,
+)
 from boilr_generator.state.observation import (
     ProjectObservation,
     TrackedResourceObservation,
@@ -21,9 +24,6 @@ from boilr_generator.state.observation import (
 from boilr_generator.state.schemas import (
     ProjectState,
     StateResource,
-)
-from boilr_generator.generation.module_update import (
-    build_project_module_transition_plan,
 )
 
 _RESOURCE_COMPARISON_FIELDS = (
@@ -351,29 +351,33 @@ def _materialize_update_operations(
             change.resource_id
         )
 
-        if change.current_path is not None:
-            if (
+        if (
+            change.current_path is not None
+            and (
                 current is None
                 or current.materialized_path
                 != change.current_path
-            ):
-                raise ValueError(
-                    "The update change current path does not "
-                    "match the persisted state for resource "
-                    f"'{change.resource_id}'."
-                )
+            )
+        ):
+            raise ValueError(
+                "The update change current path does not "
+                "match the persisted state for resource "
+                f"'{change.resource_id}'."
+            )
 
-        if change.target_path is not None:
-            if (
+        if (
+            change.target_path is not None
+            and (
                 desired is None
                 or desired.materialized_path
                 != change.target_path
-            ):
-                raise ValueError(
-                    "The update change target path does not "
-                    "match the desired state for resource "
-                    f"'{change.resource_id}'."
-                )
+            )
+        ):
+            raise ValueError(
+                "The update change target path does not "
+                "match the desired state for resource "
+                f"'{change.resource_id}'."
+            )
 
         if change.action in {
             "create",
