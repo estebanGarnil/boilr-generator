@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
@@ -220,9 +220,64 @@ class AssemblyConfig(BaseModel):
     destination_root: str
 
 
+SOURCE_ID_PATTERN = r"^[a-z][a-z0-9-]*$"
+
+
+ResourceInputKey = Annotated[
+    str,
+    Field(
+        min_length=1,
+        strict=True,
+    ),
+]
+
+
+class ResourceInputs(BaseModel):
+    """Resolved-project inputs consumed by one generated resource."""
+
+    bindings: list[ResourceInputKey] = Field(
+        default_factory=list
+    )
+    extension_points: list[ResourceInputKey] = Field(
+        default_factory=list
+    )
+
+    @model_validator(mode="after")
+    def validate_inputs(self) -> "ResourceInputs":
+        """Reject duplicates and normalize deterministic ordering."""
+        for field_name in (
+            "bindings",
+            "extension_points",
+        ):
+            values = getattr(self, field_name)
+
+            if len(values) != len(set(values)):
+                duplicates = sorted(
+                    {
+                        value
+                        for value in values
+                        if values.count(value) > 1
+                    }
+                )
+                raise ValueError(
+                    "Duplicate generated resource inputs are not "
+                    f"allowed for '{field_name}': "
+                    f"{', '.join(duplicates)}"
+                )
+
+            setattr(self, field_name, sorted(values))
+
+        return self
+
+
 class CopySource(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    id: str = Field(
+        min_length=1,
+        strict=True,
+        pattern=SOURCE_ID_PATTERN,
+    )
     from_: str = Field(alias="from")
     to: str
     strategy: Literal[
@@ -235,15 +290,46 @@ class CopySource(BaseModel):
 class RenderSource(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    id: str = Field(
+        min_length=1,
+        strict=True,
+        pattern=SOURCE_ID_PATTERN,
+    )
     from_: str = Field(alias="from")
     to: str
+    uses: ResourceInputs = Field(
+        default_factory=ResourceInputs
+    )
 
 class ModuleSources(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    copy_sources: list[CopySource] = Field(default_factory=list, alias="copy")
-    render: list[RenderSource] = Field(default_factory=list)
+    copy_sources: list[CopySource] = Field(
+        default_factory=list,
+        alias="copy",
+    )
+    render: list[RenderSource] = Field(
+        default_factory=list
+    )
 
+    @model_validator(mode="after")
+    def validate_unique_source_ids(
+        self,
+    ) -> "ModuleSources":
+        source_ids = [
+            source.id
+            for source in [
+                *self.copy_sources,
+                *self.render,
+            ]
+        ]
+
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError(
+                "Duplicate source identifiers are not allowed."
+            )
+
+        return self
 
 # --- DOCKER / EXPORTS ---
 
@@ -252,6 +338,9 @@ class DockerService(RootModel[dict[str, Any]]):
 
 
 class DockerConfig(BaseModel):
+    uses: ResourceInputs = Field(
+        default_factory=ResourceInputs
+    )
     services: dict[str, DockerService] = Field(default_factory=dict)
     volumes: dict[str, Any] = Field(default_factory=dict)
 
@@ -261,6 +350,9 @@ class ExportEnv(RootModel[dict[str, str]]):
 
 
 class ModuleExports(BaseModel):
+    uses: ResourceInputs = Field(
+        default_factory=ResourceInputs
+    )
     env: ExportEnv | None = None
 
 
@@ -292,7 +384,7 @@ class ModuleManifest(BaseModel):
         ContributionDeclaration
     ] = Field(default_factory=list)
     variables: ModuleVariables = Field(default_factory=lambda: ModuleVariables({}))
-    options: ModuleOptions = Field(default_factory=lambda: ModuleOptions({}))    
+    options: ModuleOptions = Field(default_factory=lambda: ModuleOptions({}))
     assembly: AssemblyConfig
     sources: ModuleSources = Field(default_factory=ModuleSources)
     docker: DockerConfig | None = None
@@ -356,6 +448,72 @@ class ModuleManifest(BaseModel):
                     "capability bindings: "
                     f"{', '.join(unknown_contribution_targets)}"
 
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_resource_inputs(self) -> "ModuleManifest":
+        """Validate inputs consumed by generated module resources."""
+        declared_bindings = {
+            requirement.binding_key
+            for requirement in self.requires
+        }
+        declared_extension_points = set(
+            self.extension_points
+        )
+
+        inputs_by_location = {
+            f"sources.render[{source.id}]": source.uses
+            for source in self.sources.render
+        }
+
+        if self.docker is not None:
+            inputs_by_location["docker"] = self.docker.uses
+
+        if self.exports is not None:
+            inputs_by_location["exports"] = self.exports.uses
+
+        unknown_bindings = sorted(
+            (
+                location,
+                binding,
+            )
+            for location, inputs in inputs_by_location.items()
+            for binding in inputs.bindings
+            if binding not in declared_bindings
+        )
+
+        if unknown_bindings:
+            references = ", ".join(
+                f"{location}:{binding}"
+                for location, binding in unknown_bindings
+            )
+            raise ValueError(
+                "Generated resource inputs reference undeclared "
+                f"capability bindings: {references}"
+            )
+
+        unknown_extension_points = sorted(
+            (
+                location,
+                extension_point,
+            )
+            for location, inputs in inputs_by_location.items()
+            for extension_point in inputs.extension_points
+            if extension_point
+            not in declared_extension_points
+        )
+
+        if unknown_extension_points:
+            references = ", ".join(
+                f"{location}:{extension_point}"
+                for location, extension_point
+                in unknown_extension_points
+            )
+            raise ValueError(
+                "Generated resource inputs reference undeclared "
+                f"extension points: {references}"
             )
 
         return self

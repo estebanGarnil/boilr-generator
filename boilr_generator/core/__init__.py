@@ -16,6 +16,12 @@ from boilr_generator.core.dependencies import (
     DependencyGraph,
 )
 from boilr_generator.core.module import ResolvedModule
+from boilr_generator.core.module_lifecycle import (
+    ModuleLifecycleNode,
+    ModuleLifecycleRelation,
+    ProjectModuleLifecycleGraph,
+    build_project_module_lifecycle_graph,
+)
 from boilr_generator.core.project import ResolvedProject
 
 __all__ = [
@@ -28,6 +34,10 @@ __all__ = [
     "DependencyGraph",
     "ExtensionPoint",
     "ExtensionPointValue",
+    "ModuleLifecycleNode",
+    "ModuleLifecycleRelation",
+    "ProjectModuleLifecycleGraph",
     "ResolvedModule",
     "ResolvedProject",
+    "build_project_module_lifecycle_graph",
 ]

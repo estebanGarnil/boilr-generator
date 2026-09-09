@@ -16,6 +16,7 @@ from boilr_generator.exceptions import (
     SourceNotFoundError,
     SourceReadError,
     StaleGenerationPlanError,
+    StateTransactionError,
     UnsafePathError,
 )
 from boilr_generator.generation import ProjectGenerator
@@ -25,6 +26,9 @@ from boilr_generator.generation.filesystem import (
 from boilr_generator.modules.schemas import (
     CopySource,
     RenderSource,
+)
+from boilr_generator.state.storage import (
+    STATE_DIRECTORY_NAME,
 )
 
 FilesystemSnapshotEntry = tuple[
@@ -527,6 +531,7 @@ def test_project_generator_failed_plan_does_not_modify_output(
     postgres.manifest.sources.render = [
         RenderSource.model_validate(
             {
+                "id": "missing-template",
                 "from": "missing-template.j2",
                 "to": "generated.txt",
             }
@@ -651,6 +656,7 @@ def test_project_generator_plan_reports_missing_template(
     postgres.manifest.sources.render = [
         RenderSource.model_validate(
             {
+                "id": "missing-plan-template",
                 "from": "missing-plan-template.j2",
                 "to": "generated.txt",
             }
@@ -695,6 +701,7 @@ def test_project_generator_plan_reports_missing_copy_source(
     postgres.manifest.sources.copy_sources = [
         CopySource.model_validate(
             {
+                "id": "missing-copy-source",
                 "from": "missing-copy-source",
                 "to": "generated",
             }
@@ -894,6 +901,9 @@ def test_execute_creates_only_planned_directories(
     monkeypatch,
 ):
     output_path = tmp_path / "output"
+    state_directory = (
+        output_path / STATE_DIRECTORY_NAME
+    )
     generator = ProjectGenerator(registry)
 
     plan = generator.plan(
@@ -904,6 +914,7 @@ def test_execute_creates_only_planned_directories(
     expected_paths = [
         directory.path
         for directory in plan.directories
+        if directory.path != output_path
     ]
     mkdir_calls = []
     original_mkdir = Path.mkdir
@@ -930,15 +941,28 @@ def test_execute_creates_only_planned_directories(
 
     generator.execute(plan)
 
+    generation_mkdir_calls = [
+        call
+        for call in mkdir_calls
+        if (
+            call[0] != output_path
+            and call[0] != state_directory
+            and state_directory
+            not in call[0].parents
+        )
+    ]
+
     assert expected_paths
     assert [
         path
-        for path, _, _ in mkdir_calls
+        for path, _, _ in generation_mkdir_calls
     ] == expected_paths
     assert all(
         args == () and kwargs == {}
-        for _, args, kwargs in mkdir_calls
+        for _, args, kwargs
+        in generation_mkdir_calls
     )
+    assert state_directory.is_dir()
 
 
 def test_execute_uses_planned_removal_kinds(
@@ -1060,7 +1084,6 @@ def test_project_generator_clean_plan_contains_exact_removals(
         "empty",
         "nested",
         "root.txt",
-        ".",
     ]
 
     assert [
@@ -1071,7 +1094,6 @@ def test_project_generator_clean_plan_contains_exact_removals(
         "directory",
         "directory",
         "file",
-        "directory",
     ]
 
     assert all(
@@ -1085,10 +1107,10 @@ def test_project_generator_clean_plan_contains_exact_removals(
 
     data = plan.to_dict()
 
-    assert data["summary"]["removals_count"] == 5
+    assert data["summary"]["removals_count"] == 4
     assert (
         data["summary"]["clean_removals_count"]
-        == 5
+        == 4
     )
     assert (
         data["summary"]["replace_removals_count"]
@@ -1100,7 +1122,7 @@ def test_project_generator_clean_plan_contains_exact_removals(
         for directory in plan.directories
     }
 
-    assert output_path in planned_directory_paths
+    assert output_path not in planned_directory_paths
     assert empty_directory not in planned_directory_paths
     assert nested_directory not in planned_directory_paths
 
@@ -1190,6 +1212,7 @@ def test_copy_strategy_skip_skips_existing_tree(
         module_path=tmp_path / "module",
         source=CopySource.model_validate(
             {
+                "id": "skip-source",
                 "from": "source",
                 "to": "target",
                 "strategy": "skip",
@@ -1240,6 +1263,7 @@ def test_copy_strategy_replace_plans_removal(
         module_path=tmp_path / "module",
         source=CopySource.model_validate(
             {
+                "id": "replace-plan-source",
                 "from": "source",
                 "to": "target",
                 "strategy": "replace",
@@ -1327,6 +1351,7 @@ def test_copy_strategy_replace_executes_removal(
         module_path=tmp_path / "module",
         source=CopySource.model_validate(
             {
+                "id": "replace-execute-source",
                 "from": "source",
                 "to": "target",
                 "strategy": "replace",
@@ -1432,6 +1457,7 @@ def test_copy_source_cannot_escape_module_directory(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unsafe-copy-source",
                     "from": "../outside.txt",
                     "to": "generated.txt",
                 }
@@ -1455,6 +1481,7 @@ def test_copy_source_cannot_escape_module_directory(
 
 def test_render_source_cannot_escape_module_directory(
     registry,
+    resolved_project,
     tmp_path,
 ):
     module_path = tmp_path / "module"
@@ -1468,10 +1495,12 @@ def test_render_source_cannot_escape_module_directory(
 
     with pytest.raises(UnsafePathError) as error_info:
         generator._plan_render_source(
+            resolved_project=resolved_project,
             module_key="example",
             module_path=module_path,
             source=RenderSource.model_validate(
                 {
+                    "id": "unsafe-render-source",
                     "from": "../outside.j2",
                     "to": "generated.txt",
                 }
@@ -1507,6 +1536,7 @@ def test_copy_destination_cannot_escape_output_directory(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unsafe-copy-destination",
                     "from": "source.txt",
                     "to": "../outside.txt",
                 }
@@ -1528,6 +1558,7 @@ def test_copy_destination_cannot_escape_output_directory(
 
 def test_render_destination_cannot_be_absolute(
     registry,
+    resolved_project,
     tmp_path,
 ):
     module_path = tmp_path / "module"
@@ -1542,10 +1573,12 @@ def test_render_destination_cannot_be_absolute(
 
     with pytest.raises(UnsafePathError) as error_info:
         generator._plan_render_source(
+            resolved_project=resolved_project,
             module_key="example",
             module_path=module_path,
             source=RenderSource.model_validate(
                 {
+                    "id": "unsafe-render-destination",
                     "from": "template.j2",
                     "to": str(outside_file),
                 }
@@ -1584,6 +1617,8 @@ def test_execute_rejects_unsafe_file_destination(
                 source_path=None,
                 destination_path=outside_file,
                 relative_destination_path="../outside.txt",
+                resource_id="core:test-unsafe-destination",
+                default_relative_path="outside.txt",
                 operation="generate",
                 action="create",
                 content=b"unsafe",
@@ -1627,6 +1662,7 @@ def test_source_symbolic_link_cannot_escape_module(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unsafe-copy-symlink",
                     "from": "linked.txt",
                     "to": "generated.txt",
                 }
@@ -1641,6 +1677,7 @@ def test_source_symbolic_link_cannot_escape_module(
 
 def test_destination_symbolic_link_cannot_escape_output(
     registry,
+    resolved_project,
     tmp_path,
 ):
     module_path = tmp_path / "module"
@@ -1668,10 +1705,12 @@ def test_destination_symbolic_link_cannot_escape_output(
 
     with pytest.raises(UnsafePathError):
         generator._plan_render_source(
+            resolved_project=resolved_project,
             module_key="example",
             module_path=module_path,
             source=RenderSource.model_validate(
                 {
+                    "id": "unsafe-render-symlink",
                     "from": "template.j2",
                     "to": "linked/generated.txt",
                 }
@@ -1896,6 +1935,7 @@ def test_copy_source_wraps_file_read_error(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unreadable-file-source",
                     "from": "source.txt",
                     "to": "generated.txt",
                 }
@@ -1949,6 +1989,7 @@ def test_copy_source_wraps_directory_listing_error(
             module_path=module_path,
             source=CopySource.model_validate(
                 {
+                    "id": "unreadable-directory-source",
                     "from": "source",
                     "to": "generated",
                 }
@@ -2041,15 +2082,29 @@ def test_execute_wraps_output_directory_creation_error(
 ):
     output_path = tmp_path / "output"
     generator = ProjectGenerator(registry)
-    plan = generator.plan(manifest, output_path)
+    plan = generator.plan(
+        manifest,
+        output_path,
+    )
 
     original_mkdir = Path.mkdir
 
-    def fail_output_creation(path, *args, **kwargs):
+    def fail_output_creation(
+        path,
+        *args,
+        **kwargs,
+    ):
         if path == output_path:
-            raise PermissionError(13, "Access denied")
+            raise PermissionError(
+                13,
+                "Access denied",
+            )
 
-        return original_mkdir(path, *args, **kwargs)
+        return original_mkdir(
+            path,
+            *args,
+            **kwargs,
+        )
 
     monkeypatch.setattr(
         Path,
@@ -2058,17 +2113,28 @@ def test_execute_wraps_output_directory_creation_error(
     )
 
     with pytest.raises(
-        OutputDirectoryError
+        StateTransactionError
     ) as error_info:
         generator.execute(plan)
 
     error = error_info.value
 
-    assert isinstance(error.__cause__, PermissionError)
-    assert error.context["operation"] == (
-        "create_directory"
+    assert isinstance(
+        error.__cause__,
+        PermissionError,
+    )
+    assert error.context["reason"] == (
+        "pending_state_write_failed"
     )
     assert error.context["errno"] == 13
+    assert (
+        error.context["pending_state_path"]
+        == str(
+            output_path
+            / STATE_DIRECTORY_NAME
+            / "state.pending.json"
+        )
+    )
 
 
 def test_execute_wraps_parent_directory_creation_error(
@@ -2096,6 +2162,12 @@ def test_execute_wraps_parent_directory_creation_error(
                 source_path=None,
                 destination_path=destination_path,
                 relative_destination_path=(
+                    "nested/generated.txt"
+                ),
+                resource_id=(
+                    "core:test-parent-directory"
+                ),
+                default_relative_path=(
                     "nested/generated.txt"
                 ),
                 operation="generate",
@@ -2159,6 +2231,8 @@ def test_execute_wraps_file_write_error(
                 source_path=None,
                 destination_path=destination_path,
                 relative_destination_path="generated.txt",
+                resource_id="core:test-file-write",
+                default_relative_path="generated.txt",
                 operation="generate",
                 action="create",
                 content=b"content",
@@ -2215,6 +2289,8 @@ def test_execute_wraps_file_mode_error(
                 source_path=None,
                 destination_path=destination_path,
                 relative_destination_path="generated.txt",
+                resource_id="core:test-file-mode",
+                default_relative_path="generated.txt",
                 operation="generate",
                 action="create",
                 content=b"content",

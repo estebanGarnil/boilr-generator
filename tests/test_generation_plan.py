@@ -8,6 +8,9 @@ from boilr_generator.core.generation_plan import (
     PlannedPathState,
     PlannedRemoval,
 )
+from boilr_generator.state import (
+    build_initial_project_state,
+)
 
 
 def test_generation_plan_serializes_filesystem_contract(
@@ -58,6 +61,10 @@ def test_generation_plan_serializes_filesystem_contract(
                 source_path=None,
                 destination_path=destination_path,
                 relative_destination_path=(
+                    "nested/generated.txt"
+                ),
+                resource_id="module:django:render:generated",
+                default_relative_path=(
                     "nested/generated.txt"
                 ),
                 operation="generate",
@@ -122,6 +129,12 @@ def test_generation_plan_serializes_filesystem_contract(
     assert serialized_file["destination_path"] == str(
         destination_path
     )
+    assert serialized_file["resource_id"] == (
+        "module:django:render:generated"
+    )
+    assert serialized_file["default_relative_path"] == (
+        "nested/generated.txt"
+    )
     assert serialized_file["content_size"] == len(
         planned_content
     )
@@ -152,6 +165,8 @@ def test_generation_plan_summary_counts_contract_operations(
             source_path=None,
             destination_path=output_path / "create.txt",
             relative_destination_path="create.txt",
+            resource_id="core:create-test",
+            default_relative_path="create.txt",
             operation="generate",
             action="create",
             content=b"a",
@@ -160,6 +175,8 @@ def test_generation_plan_summary_counts_contract_operations(
             source_path=None,
             destination_path=output_path / "overwrite.txt",
             relative_destination_path="overwrite.txt",
+            resource_id="core:overwrite-test",
+            default_relative_path="overwrite.txt",
             operation="generate",
             action="overwrite",
             content=b"bb",
@@ -168,6 +185,8 @@ def test_generation_plan_summary_counts_contract_operations(
             source_path=None,
             destination_path=output_path / "skip.txt",
             relative_destination_path="skip.txt",
+            resource_id="core:skip-test",
+            default_relative_path="skip.txt",
             operation="copy",
             action="skip",
             content=b"ccc",
@@ -233,3 +252,29 @@ def test_generation_plan_summary_counts_contract_operations(
         "content_bytes": 6,
         "content_bytes_to_write": 3,
     }
+
+def test_generation_plan_serializes_desired_state(
+    manifest,
+    resolved_project,
+    tmp_path,
+):
+    desired_state = build_initial_project_state(
+        manifest=manifest,
+        resolved_project=resolved_project,
+        files=(),
+        generator_version="0.1.0",
+    )
+
+    plan = GenerationPlan(
+        resolved_project=resolved_project,
+        output_path=tmp_path / "output",
+        desired_state=desired_state,
+    )
+
+    data = plan.to_dict()
+
+    assert plan.desired_state is desired_state
+    assert data["desired_state"] == (
+        desired_state.model_dump(mode="json")
+    )
+    assert json.loads(json.dumps(data)) == data

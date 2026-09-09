@@ -13,10 +13,19 @@ from rich.table import Table
 from rich.tree import Tree
 
 from boilr_generator.exceptions import BoilrError
-from boilr_generator.generation import ProjectGenerator
+from boilr_generator.generation import (
+    ProjectGenerator,
+    apply_reconciliation_plan,
+    build_project_update_plan,
+    observe_project,
+)
 from boilr_generator.manifest import load_project_manifest_from_yaml
 from boilr_generator.modules.registry import ModuleRegistry
 from boilr_generator.paths import get_builtin_modules_path
+from boilr_generator.state import (
+    ProjectStateStorage,
+    build_reconciliation_plan,
+)
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -393,6 +402,874 @@ def render_files_tree(
         border_style="bright_black",
     )
 
+def _status_label(key: str) -> str:
+    """Build a readable label from one status key."""
+    return (
+        key.removesuffix("_count")
+        .replace("_", " ")
+        .capitalize()
+    )
+
+
+def _status_entry_path(entry: dict) -> str:
+    """Select the most useful path from an observation."""
+    for key in (
+        "actual_path",
+        "observed_path",
+        "path",
+        "expected_path",
+        "materialized_path",
+    ):
+        value = entry.get(key)
+
+        if value:
+            return str(value)
+
+    return "-"
+
+
+def _status_entries(
+    observation: dict,
+) -> list[tuple[str, dict]]:
+    """Collect serialized resource observations."""
+    entries: list[tuple[str, dict]] = []
+
+    for section, value in observation.items():
+        if not isinstance(value, list):
+            continue
+
+        for item in value:
+            if isinstance(item, dict):
+                entries.append(
+                    (section, item)
+                )
+
+    return entries
+
+
+def render_project_status(
+    status_data: dict,
+) -> None:
+    """Render one project observation for humans."""
+    observation = status_data["observation"]
+    summary = observation["summary"]
+    has_drift = bool(
+        observation["has_drift"]
+    )
+    pending_transaction = status_data[
+        "pending_transaction"
+    ]
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_column(style="bold")
+    overview.add_column()
+
+    overview.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                status_data["output_path"]
+            )
+        ),
+    )
+    overview.add_row(
+        "Drift",
+        (
+            "[yellow]Yes[/yellow]"
+            if has_drift
+            else "[green]No[/green]"
+        ),
+    )
+    overview.add_row(
+        "Pending transaction",
+        (
+            "[yellow]Yes[/yellow]"
+            if pending_transaction
+            else "No"
+        ),
+    )
+
+    render_section(
+        overview,
+        "Boilr project status",
+        border_style=(
+            "yellow"
+            if has_drift or pending_transaction
+            else "green"
+        ),
+    )
+
+    counters = Table.grid(padding=(0, 4))
+    counters.add_column(style="bold")
+    counters.add_column(justify="right")
+
+    for key, value in summary.items():
+        if key == "has_drift":
+            continue
+
+        counters.add_row(
+            _status_label(key),
+            str(value),
+        )
+
+    render_section(
+        counters,
+        "Resource summary",
+    )
+
+    details = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    details.add_column("Status")
+    details.add_column("Resource")
+    details.add_column("Path")
+    details.add_column("Candidates")
+
+    status_styles = {
+        "modified": "yellow",
+        "missing": "red",
+        "moved": "cyan",
+        "move_candidate": "cyan",
+        "ambiguous_move": "magenta",
+        "type_changed": "red",
+        "mode_changed": "yellow",
+        "untracked": "blue",
+    }
+
+    visible_entries = 0
+
+    for section, entry in _status_entries(
+        observation
+    ):
+        status = str(
+            entry.get(
+                "status",
+                section.rstrip("s"),
+            )
+        )
+
+        if status == "unchanged":
+            continue
+
+        resource_id = str(
+            entry.get("resource_id")
+            or entry.get("id")
+            or "-"
+        )
+        candidate_paths = entry.get(
+            "candidate_paths",
+            [],
+        )
+        candidates = (
+            ", ".join(
+                str(path)
+                for path in candidate_paths
+            )
+            if candidate_paths
+            else "-"
+        )
+        style = status_styles.get(
+            status,
+            "white",
+        )
+
+        details.add_row(
+            f"[{style}]{escape(status)}[/]",
+            escape(resource_id),
+            escape(
+                _status_entry_path(entry)
+            ),
+            escape(candidates),
+        )
+        visible_entries += 1
+
+    if visible_entries == 0:
+        details.add_row(
+            "[green]unchanged[/green]",
+            "-",
+            "No resource drift detected.",
+            "-",
+        )
+
+    render_section(
+        details,
+        "Resource drift",
+    )
+
+def _parse_accepted_moves(
+    values: list[str],
+) -> dict[str, str]:
+    """Parse repeated RESOURCE_ID=PATH move selections."""
+    accepted_moves: dict[str, str] = {}
+
+    for value in values:
+        if "=" not in value:
+            raise ValueError(
+                "Accepted moves must use RESOURCE_ID=PATH."
+            )
+
+        resource_id, path = (
+            part.strip()
+            for part in value.split("=", 1)
+        )
+
+        if not resource_id or not path:
+            raise ValueError(
+                "Accepted moves require a resource identifier "
+                "and a destination path."
+            )
+
+        if resource_id in accepted_moves:
+            raise ValueError(
+                "A resource move may be accepted only once: "
+                f"'{resource_id}'."
+            )
+
+        accepted_moves[resource_id] = path
+
+    return accepted_moves
+
+
+def render_reconciliation_error(
+    error_data: dict,
+    *,
+    json_output: bool,
+) -> None:
+    """Render one invalid reconciliation request."""
+    if json_output:
+        console.print_json(data=error_data)
+        return
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold red")
+    table.add_column()
+
+    table.add_row(
+        "Message",
+        escape(error_data["message"]),
+    )
+    table.add_row(
+        "Code",
+        escape(error_data["code"]),
+    )
+    table.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                error_data["output_path"]
+            )
+        ),
+    )
+    table.add_row(
+        "Suggestion",
+        escape(error_data["suggestion"]),
+    )
+
+    render_section(
+        table,
+        "Boilr reconciliation error",
+        border_style="red",
+    )
+
+
+def render_reconciliation_result(
+    result_data: dict,
+) -> None:
+    """Render one reconciliation result for humans."""
+    plan = result_data["plan"]
+    moves = plan["moves"]
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_column(style="bold")
+    overview.add_column()
+
+    overview.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                result_data["output_path"]
+            )
+        ),
+    )
+    overview.add_row(
+        "Dry run",
+        (
+            "[yellow]Yes[/yellow]"
+            if result_data["dry_run"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "Accepted moves",
+        str(plan["summary"]["moves_count"]),
+    )
+    overview.add_row(
+        "State updated",
+        (
+            "[green]Yes[/green]"
+            if result_data["applied"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "State",
+        escape(
+            shorten_path(
+                result_data["state_path"]
+            )
+        ),
+    )
+
+    render_section(
+        overview,
+        "Boilr project reconciliation",
+        border_style=(
+            "cyan"
+            if result_data["dry_run"]
+            else "green"
+        ),
+    )
+
+    details = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    details.add_column("Resource")
+    details.add_column("Detected as")
+    details.add_column("Previous path")
+    details.add_column("Accepted path")
+
+    if not moves:
+        details.add_row(
+            "-",
+            "No accepted moves",
+            "-",
+            "-",
+        )
+
+    for move in moves:
+        details.add_row(
+            escape(move["resource_id"]),
+            escape(move["detected_as"]),
+            escape(move["from_path"]),
+            escape(move["to_path"]),
+        )
+
+    render_section(
+        details,
+        "Accepted resource moves",
+    )
+
+def render_update_error(
+    error_data: dict,
+    *,
+    json_output: bool,
+) -> None:
+    """Render one invalid project-update request."""
+    if json_output:
+        console.print_json(data=error_data)
+        return
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold red")
+    table.add_column()
+
+    table.add_row(
+        "Message",
+        escape(error_data["message"]),
+    )
+    table.add_row(
+        "Code",
+        escape(error_data["code"]),
+    )
+    table.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                error_data["output_path"]
+            )
+        ),
+    )
+    table.add_row(
+        "Suggestion",
+        escape(error_data["suggestion"]),
+    )
+
+    render_section(
+        table,
+        "Boilr update error",
+        border_style="red",
+    )
+
+
+def render_update_result(
+    result_data: dict,
+    *,
+    show_details: bool,
+) -> None:
+    """Render one project update result for humans."""
+    plan = result_data["plan"]
+    summary = plan["summary"]
+    resource_conflicts = plan["conflicts"]
+    module_transitions = plan[
+        "module_transitions"
+    ]
+    module_summary = module_transitions[
+        "summary"
+    ]
+    module_conflicts = module_transitions[
+        "conflicts"
+    ]
+    total_conflicts = (
+        len(resource_conflicts)
+        + len(module_conflicts)
+    )
+
+    overview = Table.grid(padding=(0, 2))
+    overview.add_column(style="bold")
+    overview.add_column()
+
+    overview.add_row(
+        "Output",
+        escape(
+            shorten_path(
+                result_data["output_path"]
+            )
+        ),
+    )
+    overview.add_row(
+        "Dry run",
+        (
+            "[yellow]Yes[/yellow]"
+            if result_data["dry_run"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "Changes",
+        (
+            "[yellow]Yes[/yellow]"
+            if plan["has_changes"]
+            else "[green]No[/green]"
+        ),
+    )
+    overview.add_row(
+        "Module changes",
+        (
+            "[yellow]Yes[/yellow]"
+            if module_transitions[
+                "has_changes"
+            ]
+            else "[green]No[/green]"
+        ),
+    )
+    overview.add_row(
+        "Filesystem changes",
+        (
+            "[yellow]Yes[/yellow]"
+            if plan["has_filesystem_changes"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "Conflicts",
+        (
+            f"[red]{total_conflicts}[/red]"
+            if total_conflicts
+            else "[green]0[/green]"
+        ),
+    )
+    overview.add_row(
+        "Ready",
+        (
+            "[green]Yes[/green]"
+            if result_data["ready"]
+            else "[red]No[/red]"
+        ),
+    )
+    overview.add_row(
+        "Applied",
+        (
+            "[green]Yes[/green]"
+            if result_data["applied"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "Pending transaction",
+        (
+            "[yellow]Yes[/yellow]"
+            if result_data["pending_transaction"]
+            else "No"
+        ),
+    )
+    overview.add_row(
+        "State",
+        escape(
+            shorten_path(
+                result_data["state_path"]
+            )
+        ),
+    )
+
+    if total_conflicts:
+        border_style = "red"
+    elif result_data["dry_run"]:
+        border_style = "cyan"
+    else:
+        border_style = "green"
+
+    render_section(
+        overview,
+        "Boilr project update",
+        border_style=border_style,
+    )
+
+    counters = Table.grid(padding=(0, 4))
+    counters.add_column(style="bold")
+    counters.add_column(justify="right")
+
+    for key, value in summary.items():
+        counters.add_row(
+            _status_label(key),
+            str(value),
+        )
+
+    render_section(
+        counters,
+        "Update summary",
+    )
+
+    module_counters = Table.grid(
+        padding=(0, 4)
+    )
+    module_counters.add_column(style="bold")
+    module_counters.add_column(
+        justify="right"
+    )
+
+    for key, value in module_summary.items():
+        module_counters.add_row(
+            _status_label(key),
+            str(value),
+        )
+
+    render_section(
+        module_counters,
+        "Module transition summary",
+    )
+
+    if resource_conflicts:
+        conflict_table = Table(
+            show_header=True,
+            header_style="bold red",
+        )
+        conflict_table.add_column("Resource")
+        conflict_table.add_column("Reason")
+        conflict_table.add_column("Path")
+        conflict_table.add_column(
+            "Observed as"
+        )
+
+        for conflict in resource_conflicts:
+            conflict_table.add_row(
+                escape(
+                    conflict["resource_id"]
+                ),
+                escape(conflict["reason"]),
+                escape(conflict["path"]),
+                escape(
+                    conflict[
+                        "observed_status"
+                    ]
+                    or "-"
+                ),
+            )
+
+        render_section(
+            conflict_table,
+            "Update conflicts",
+            border_style="red",
+        )
+
+    if module_conflicts:
+        module_conflict_table = Table(
+            show_header=True,
+            header_style="bold red",
+        )
+        module_conflict_table.add_column(
+            "Reason"
+        )
+        module_conflict_table.add_column(
+            "Modules"
+        )
+
+        for conflict in module_conflicts:
+            module_conflict_table.add_row(
+                escape(
+                    _status_label(
+                        conflict["reason"]
+                    )
+                ),
+                escape(
+                    ", ".join(
+                        conflict[
+                            "module_keys"
+                        ]
+                    )
+                ),
+            )
+
+        render_section(
+            module_conflict_table,
+            "Module conflicts",
+            border_style="red",
+        )
+
+    if not show_details:
+        console.print(
+            "[dim]Run with --info to show module and "
+            "resource transitions and filesystem "
+            "operations.[/dim]"
+        )
+        return
+
+    module_changes = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    module_changes.add_column(
+        "Action",
+        no_wrap=True,
+    )
+    module_changes.add_column(
+        "Module",
+        no_wrap=True,
+    )
+    module_changes.add_column(
+        "Details",
+        overflow="fold",
+    )
+
+    module_action_styles = {
+        "add": "green",
+        "update": "yellow",
+        "retain": "dim",
+        "remove": "red",
+    }
+
+    for transition in module_transitions[
+        "modules"
+    ]:
+        action = transition["action"]
+        style = module_action_styles.get(
+            action,
+            "white",
+        )
+        changed_fields = (
+            ", ".join(
+                transition[
+                    "changed_fields"
+                ]
+            )
+            if transition["changed_fields"]
+            else "-"
+        )
+        details = (
+            "Version: "
+            f"{transition['current_version'] or '-'}"
+            " -> "
+            f"{transition['target_version'] or '-'}"
+            "\nChanged fields: "
+            f"{changed_fields}"
+        )
+
+        module_changes.add_row(
+            f"[{style}]{escape(action)}[/]",
+            escape(
+                transition["module_key"]
+            ),
+            escape(details),
+        )
+
+    render_section(
+        module_changes,
+        "Module transitions",
+    )
+
+    render_section(
+        module_changes,
+        "Module transitions",
+    )
+
+    binding_changes = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    binding_changes.add_column("Action")
+    binding_changes.add_column("Consumer")
+    binding_changes.add_column("Binding")
+    binding_changes.add_column(
+        "Current provider"
+    )
+    binding_changes.add_column(
+        "Target provider"
+    )
+    binding_changes.add_column(
+        "Changed fields"
+    )
+
+    for transition in module_transitions[
+        "bindings"
+    ]:
+        action = transition["action"]
+        style = module_action_styles.get(
+            action,
+            "white",
+        )
+        changed_fields = (
+            ", ".join(
+                transition[
+                    "changed_fields"
+                ]
+            )
+            if transition["changed_fields"]
+            else "-"
+        )
+
+        binding_changes.add_row(
+            f"[{style}]{escape(action)}[/]",
+            escape(
+                transition[
+                    "consumer_module"
+                ]
+            ),
+            escape(
+                transition["binding"]
+            ),
+            escape(
+                transition[
+                    "current_provider_module"
+                ]
+                or "-"
+            ),
+            escape(
+                transition[
+                    "target_provider_module"
+                ]
+                or "-"
+            ),
+            escape(changed_fields),
+        )
+
+    render_section(
+        binding_changes,
+        "Capability binding transitions",
+    )
+
+    lifecycle_order = Table.grid(
+        padding=(0, 2)
+    )
+    lifecycle_order.add_column(
+        style="bold"
+    )
+    lifecycle_order.add_column()
+
+    lifecycle_order.add_row(
+        "Activation order",
+        escape(
+            " -> ".join(
+                module_transitions[
+                    "activation_order"
+                ]
+            )
+            or "-"
+        ),
+    )
+    lifecycle_order.add_row(
+        "Removal order",
+        escape(
+            " -> ".join(
+                module_transitions[
+                    "removal_order"
+                ]
+            )
+            or "-"
+        ),
+    )
+
+    render_section(
+        lifecycle_order,
+        "Module lifecycle order",
+    )
+
+    changes = Table(
+        show_header=True,
+        header_style="bold",
+    )
+    changes.add_column("Action")
+    changes.add_column("Resource")
+    changes.add_column("Current path")
+    changes.add_column("Target path")
+    changes.add_column("Observed as")
+    changes.add_column("Changed fields")
+
+    action_styles = {
+        "create": "green",
+        "replace": "yellow",
+        "remove": "red",
+        "retain": "dim",
+        "relocate": "cyan",
+        "forget": "magenta",
+    }
+
+    for change in plan["changes"]:
+        action = change["action"]
+        style = action_styles.get(
+            action,
+            "white",
+        )
+        changed_fields = (
+            ", ".join(
+                change["changed_fields"]
+            )
+            if change["changed_fields"]
+            else "-"
+        )
+
+        changes.add_row(
+            f"[{style}]{escape(action)}[/]",
+            escape(change["resource_id"]),
+            escape(
+                change["current_path"] or "-"
+            ),
+            escape(
+                change["target_path"] or "-"
+            ),
+            escape(
+                change["observed_status"]
+                or "-"
+            ),
+            escape(changed_fields),
+        )
+
+    render_section(
+        changes,
+        "Resource transitions",
+    )
+
+    execution_plan = plan["execution_plan"]
+
+    if execution_plan is None:
+        return
+
+    render_filesystem_operations(
+        execution_plan
+    )
+    render_files_tree(
+        execution_plan["files"]
+    )
 
 @app.command()
 def dry_run(
@@ -489,6 +1366,495 @@ def dry_run(
         else:
             render_boilr_error(error)
 
+        raise typer.Exit(code=1) from None
+
+@app.command()
+def status(
+    output_path: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Generated project directory to inspect."
+            ),
+        ),
+    ] = Path("."),
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Print the complete project observation "
+                "as JSON."
+            ),
+        ),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--debug",
+            help=(
+                "Show the complete traceback when an "
+                "error occurs."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Inspect generated resources without modifying the project."""
+    try:
+        storage = ProjectStateStorage(output_path)
+        pending_transaction = (
+            storage.pending_state_path.exists()
+        )
+        observation = observe_project(
+            output_path
+        )
+
+        if observation is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "No committed Boilr project state "
+                    "was found."
+                ),
+                "output_path": str(output_path),
+                "pending_transaction": (
+                    pending_transaction
+                ),
+                "suggestion": (
+                    "Run 'boilr generate' before "
+                    "inspecting project status."
+                ),
+            }
+
+            if json_output:
+                console.print_json(
+                    data=error_data
+                )
+            else:
+                table = Table.grid(
+                    padding=(0, 2)
+                )
+                table.add_column(
+                    style="bold red"
+                )
+                table.add_column()
+
+                table.add_row(
+                    "Message",
+                    escape(
+                        error_data["message"]
+                    ),
+                )
+                table.add_row(
+                    "Output",
+                    escape(
+                        shorten_path(
+                            output_path
+                        )
+                    ),
+                )
+                table.add_row(
+                    "Pending transaction",
+                    (
+                        "[yellow]Yes[/yellow]"
+                        if pending_transaction
+                        else "No"
+                    ),
+                )
+                table.add_row(
+                    "Suggestion",
+                    escape(
+                        error_data[
+                            "suggestion"
+                        ]
+                    ),
+                )
+
+                render_section(
+                    table,
+                    "Boilr status error",
+                    border_style="red",
+                )
+
+            raise typer.Exit(code=1)
+
+        status_data = {
+            "output_path": str(output_path),
+            "pending_transaction": (
+                pending_transaction
+            ),
+            "observation": (
+                observation.to_dict()
+            ),
+        }
+
+        if json_output:
+            console.print_json(
+                data=status_data
+            )
+            return
+
+        render_project_status(status_data)
+    except BoilrError as error:
+        if debug:
+            raise
+
+        if json_output:
+            render_boilr_error_json(error)
+        else:
+            render_boilr_error(error)
+
+        raise typer.Exit(code=1) from None
+
+@app.command()
+def reconcile(
+    output_path: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Generated project directory to reconcile."
+            ),
+        ),
+    ] = Path("."),
+    accepted_moves: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--accept-move",
+            help=(
+                "Accept a detected move as RESOURCE_ID=PATH. "
+                "May be repeated."
+            ),
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Validate and display the reconciliation "
+                "without updating project state."
+            ),
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Print the complete reconciliation result "
+                "as JSON."
+            ),
+        ),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--debug",
+            help=(
+                "Show the complete traceback when an "
+                "error occurs."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Accept detected resource moves into project state."""
+    try:
+        storage = ProjectStateStorage(output_path)
+        current_state = storage.read()
+
+        if current_state is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "No committed Boilr project state "
+                    "was found."
+                ),
+                "output_path": str(output_path),
+                "suggestion": (
+                    "Run 'boilr generate' before "
+                    "reconciling project resources."
+                ),
+            }
+            render_reconciliation_error(
+                error_data,
+                json_output=json_output,
+            )
+            raise typer.Exit(code=1)
+
+        observation = observe_project(output_path)
+
+        if observation is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "The committed Boilr project state "
+                    "could not be observed."
+                ),
+                "output_path": str(output_path),
+                "suggestion": (
+                    "Run 'boilr status' and inspect the "
+                    "project state before retrying."
+                ),
+            }
+            render_reconciliation_error(
+                error_data,
+                json_output=json_output,
+            )
+            raise typer.Exit(code=1)
+
+        parsed_moves = _parse_accepted_moves(
+            accepted_moves or []
+        )
+        plan = build_reconciliation_plan(
+            current_state,
+            observation,
+            parsed_moves,
+        )
+
+        if dry_run:
+            state_path = storage.state_path
+            applied = False
+        else:
+            state_path = apply_reconciliation_plan(
+                output_path,
+                plan,
+            )
+            applied = plan.has_changes
+
+        result_data = {
+            "output_path": str(output_path),
+            "state_path": str(state_path),
+            "dry_run": dry_run,
+            "applied": applied,
+            "plan": plan.to_dict(),
+        }
+
+        if json_output:
+            console.print_json(data=result_data)
+            return
+
+        render_reconciliation_result(result_data)
+    except BoilrError as error:
+        if debug:
+            raise
+
+        if json_output:
+            render_boilr_error_json(error)
+        else:
+            render_boilr_error(error)
+
+        raise typer.Exit(code=1) from None
+    except ValueError as error:
+        if debug:
+            raise
+
+        error_data = {
+            "code": "invalid_reconciliation_request",
+            "message": str(error),
+            "output_path": str(output_path),
+            "suggestion": (
+                "Use 'boilr status --json' to inspect "
+                "resource identifiers and move candidates."
+            ),
+        }
+        render_reconciliation_error(
+            error_data,
+            json_output=json_output,
+        )
+        raise typer.Exit(code=1) from None
+
+@app.command()
+def update(
+    manifest_path: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Project manifest describing the desired "
+                "configuration."
+            ),
+        ),
+    ],
+    output_path: Annotated[
+        Path,
+        typer.Argument(
+            help=(
+                "Generated project directory to update."
+            ),
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Plan and display the update without "
+                "modifying project files or state."
+            ),
+        ),
+    ] = False,
+    info: Annotated[
+        bool,
+        typer.Option(
+            "--info",
+            help=(
+                "Show resource transitions and exact "
+                "filesystem operations."
+            ),
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help=(
+                "Print the complete project update plan "
+                "as JSON."
+            ),
+        ),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--debug",
+            help=(
+                "Show the complete traceback when an "
+                "error occurs."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Safely update a generated project from its manifest."""
+    try:
+        manifest = load_project_manifest_from_yaml(
+            str(manifest_path)
+        )
+        storage = ProjectStateStorage(output_path)
+        current_state = storage.read()
+
+        if current_state is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "No committed Boilr project state "
+                    "was found."
+                ),
+                "output_path": str(output_path),
+                "suggestion": (
+                    "Run 'boilr generate' before updating "
+                    "the project."
+                ),
+            }
+            render_update_error(
+                error_data,
+                json_output=json_output,
+            )
+            raise typer.Exit(code=1)
+
+        generator = build_generator()
+        candidate_plan = generator.plan(
+            manifest=manifest,
+            output_path=output_path,
+            clean=False,
+        )
+        observation = observe_project(
+            output_path
+        )
+
+        if observation is None:
+            error_data = {
+                "code": "project_state_not_found",
+                "message": (
+                    "The committed Boilr project state "
+                    "could not be observed."
+                ),
+                "output_path": str(output_path),
+                "suggestion": (
+                    "Run 'boilr status' and inspect the "
+                    "project state before retrying."
+                ),
+            }
+            render_update_error(
+                error_data,
+                json_output=json_output,
+            )
+            raise typer.Exit(code=1)
+
+        update_plan = build_project_update_plan(
+            candidate_plan,
+            current_state,
+            observation,
+        )
+        pending_path = (
+            storage.pending_state_path
+        )
+        pending_transaction = (
+            pending_path.exists()
+            or pending_path.is_symlink()
+        )
+        ready = (
+            update_plan.can_execute
+            and not pending_transaction
+        )
+
+        if dry_run:
+            applied = False
+        else:
+            generator.execute_update(
+                update_plan
+            )
+            applied = update_plan.has_changes
+
+        result_data = {
+            "output_path": str(output_path),
+            "state_path": str(
+                storage.state_path
+            ),
+            "dry_run": dry_run,
+            "ready": ready,
+            "applied": applied,
+            "pending_transaction": (
+                pending_transaction
+            ),
+            "plan": update_plan.to_dict(),
+        }
+
+        if json_output:
+            console.print_json(
+                data=result_data
+            )
+            return
+
+        render_update_result(
+            result_data,
+            show_details=info,
+        )
+    except BoilrError as error:
+        if debug:
+            raise
+
+        if json_output:
+            render_boilr_error_json(error)
+        else:
+            render_boilr_error(error)
+
+        raise typer.Exit(code=1) from None
+    except ValueError as error:
+        if debug:
+            raise
+
+        error_data = {
+            "code": "invalid_update_request",
+            "message": str(error),
+            "output_path": str(output_path),
+            "suggestion": (
+                "Inspect the manifest and run "
+                "'boilr status --json' before retrying."
+            ),
+        }
+        render_update_error(
+            error_data,
+            json_output=json_output,
+        )
         raise typer.Exit(code=1) from None
 
 @app.command()

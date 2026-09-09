@@ -1,11 +1,23 @@
 """Generation planning models."""
 
+from __future__ import annotations
+
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from boilr_generator.core.project import ResolvedProject
+from boilr_generator.state.schemas import ProjectState
+
+if TYPE_CHECKING:
+    from boilr_generator.generation.module_update import (
+        ProjectModuleTransitionPlan,
+    )
+    from boilr_generator.state.observation import (
+        ProjectObservation,
+    )
 
 PathKind = Literal[
     "file",
@@ -43,11 +55,28 @@ class PlannedFile:
     source_path: Path | None
     destination_path: Path
     relative_destination_path: str
+    resource_id: str
+    default_relative_path: str
     operation: str
     action: str
     content: bytes = field(repr=False)
     module: str | None = None
+    contributors: list[str] = field(default_factory=list)
     mode: int | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize deterministic ownership provenance."""
+        contributors = set(self.contributors)
+
+        if self.module is not None:
+            contributors.add(self.module)
+
+        self.contributors = sorted(contributors)
+
+    @property
+    def owner(self) -> str | None:
+        """Return the module that declares this resource."""
+        return self.module
 
     @property
     def content_size(self) -> int:
@@ -104,6 +133,7 @@ class GenerationPlan:
         default_factory=list
     )
     clean_output: bool = False
+    desired_state: ProjectState | None = None
 
     @property
     def files_to_create(self) -> list[PlannedFile]:
@@ -190,6 +220,11 @@ class GenerationPlan:
                 self.resolved_project.list_module_keys()
             ),
         }
+        data["desired_state"] = (
+            self.desired_state.model_dump(mode="json")
+            if self.desired_state is not None
+            else None
+        )
 
         for path_state in data["initial_output_state"]:
             path_state["path"] = str(
@@ -230,3 +265,173 @@ class GenerationPlan:
         data["summary"] = self.summary
 
         return data
+
+UpdateResourceAction = Literal[
+    "create",
+    "replace",
+    "remove",
+    "retain",
+    "relocate",
+    "forget",
+]
+UpdateConflictReason = Literal[
+    "modified_resource",
+    "type_changed_resource",
+    "mode_changed_resource",
+    "unresolved_move",
+    "untracked_destination",
+    "tracked_destination",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedUpdateChange:
+    """One resource transition requested by an update."""
+
+    resource_id: str
+    action: UpdateResourceAction
+    current_path: str | None
+    target_path: str | None
+    observed_status: str | None
+    changed_fields: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return one JSON-compatible transition."""
+        data = asdict(self)
+        data["changed_fields"] = list(
+            self.changed_fields
+        )
+        return data
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedUpdateConflict:
+    """One unsafe resource transition blocking an update."""
+
+    resource_id: str
+    reason: UpdateConflictReason
+    path: str
+    observed_status: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return one JSON-compatible conflict."""
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class ProjectUpdatePlan:
+    """Read-only comparison of current and desired project state."""
+
+    candidate_plan: GenerationPlan = field(repr=False)
+    current_state: ProjectState
+    observation: ProjectObservation = field(repr=False)
+    desired_state: ProjectState
+    changes: tuple[PlannedUpdateChange, ...]
+    module_transitions: ProjectModuleTransitionPlan = field(
+        repr=False
+    )
+    conflicts: tuple[PlannedUpdateConflict, ...] = ()
+    execution_plan: GenerationPlan | None = field(
+        default=None,
+        repr=False,
+    )
+
+    @property
+    def can_execute(self) -> bool:
+        """Return whether the update has a safe executable plan."""
+        return (
+            self.module_transitions.can_execute
+            and not self.conflicts
+            and self.execution_plan is not None
+        )
+
+    @property
+    def has_filesystem_changes(self) -> bool:
+        """Return whether execution would mutate project files."""
+        mutating_actions = {
+            "create",
+            "replace",
+            "remove",
+            "relocate",
+        }
+        return any(
+            change.action in mutating_actions
+            for change in self.changes
+        )
+
+    @property
+    def has_changes(self) -> bool:
+        """Return whether filesystem or persisted state differs."""
+        return (
+            self.has_filesystem_changes
+            or self.desired_state != self.current_state
+        )
+
+    @property
+    def summary(self) -> dict[str, int]:
+        """Return deterministic transition counters."""
+        counts = Counter(
+            change.action
+            for change in self.changes
+        )
+
+        return {
+            "resources_count": len(self.changes),
+            "create_count": counts["create"],
+            "replace_count": counts["replace"],
+            "remove_count": counts["remove"],
+            "retain_count": counts["retain"],
+            "relocate_count": counts["relocate"],
+            "forget_count": counts["forget"],
+            "filesystem_changes_count": sum(
+                counts[action]
+                for action in (
+                    "create",
+                    "replace",
+                    "remove",
+                    "relocate",
+                )
+            ),
+            "conflicts_count": len(self.conflicts),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the complete update decision contract."""
+        return {
+            "output_path": str(
+                self.candidate_plan.output_path
+            ),
+            "current_state": (
+                self.current_state.model_dump(
+                    mode="json"
+                )
+            ),
+            "desired_state": (
+                self.desired_state.model_dump(
+                    mode="json"
+                )
+            ),
+            "observation": self.observation.to_dict(),
+            "module_transitions": (
+                self.module_transitions.to_dict()
+            ),
+            "execution_plan": (
+                self.execution_plan.to_dict()
+                if self.execution_plan is not None
+                else None
+            ),
+            "changes": [
+                change.to_dict()
+                for change in self.changes
+            ],
+            "conflicts": [
+                conflict.to_dict()
+                for conflict in self.conflicts
+            ],
+            "summary": self.summary,
+            "can_execute": self.can_execute,
+            "has_filesystem_changes": (
+                self.has_filesystem_changes
+            ),
+            "has_changes": self.has_changes,
+        }

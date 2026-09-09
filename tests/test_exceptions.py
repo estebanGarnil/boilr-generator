@@ -18,6 +18,7 @@ from boilr_generator.exceptions import (
     ProviderSelectionError,
     SourceReadError,
     StaleGenerationPlanError,
+    StateTransactionError,
     TemplateRenderError,
     UnknownOptionError,
     UnknownVariableError,
@@ -47,6 +48,7 @@ from boilr_generator.exceptions import (
         InvalidEnvironmentVariableError,
         ProviderSelectionError,
         StaleGenerationPlanError,
+        StateTransactionError,
     ],
 )
 def test_all_boilr_errors_inherit_from_root(exception_type):

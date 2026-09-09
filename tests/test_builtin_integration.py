@@ -83,7 +83,7 @@ def test_django_renders_contributed_settings_declaratively(
         "CACHES": cache_settings,
     }
     settings_value.contributor_module_keys = [
-        "test-cache-integration",
+        "django-postgres",
     ]
 
     generator = ProjectGenerator(registry)

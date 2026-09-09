@@ -10,9 +10,22 @@ from boilr_generator.core.generation_plan import (
 from boilr_generator.exceptions import (
     UnsupportedFilesystemEntryError,
 )
+from boilr_generator.state.storage import (
+    STATE_DIRECTORY_NAME,
+)
 
 _HASH_CHUNK_SIZE = 1024 * 1024
 
+
+def is_reserved_state_path(
+    relative_path: Path,
+) -> bool:
+    """Return whether a path belongs to Boilr metadata."""
+    return (
+        bool(relative_path.parts)
+        and relative_path.parts[0].casefold()
+        == STATE_DIRECTORY_NAME.casefold()
+    )
 
 def _relative_path(
     path: Path,
@@ -121,6 +134,9 @@ def _capture_directory_entries(
     )
 
     for entry in entries:
+        if is_reserved_state_path(entry.relative_to(output_path)):
+            continue
+
         state = capture_path_state(
             entry,
             output_path,
@@ -141,7 +157,7 @@ def _capture_directory_entries(
 def capture_output_state(
     output_path: Path,
 ) -> list[PlannedPathState]:
-    """Capture the complete current output tree."""
+    """Capture the output tree excluding Boilr metadata."""
     root_state = capture_path_state(
         output_path,
         output_path,
