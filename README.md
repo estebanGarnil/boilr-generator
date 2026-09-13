@@ -66,7 +66,9 @@ Install Boilr:
 python -m pip install .
 ~~~
 
-The installation exposes the `boilr` command. The module entry point remains available as `python -m boilr_generator.cli`.
+The distribution name is `boilr-generator`. The installation exposes the
+`boilr` command, while the Python package remains `boilr_generator`. The
+module entry point is also available as `python -m boilr_generator.cli`.
 
 ### Development installation
 

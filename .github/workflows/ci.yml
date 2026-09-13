@@ -139,6 +139,7 @@ jobs:
               assert len(metadata_paths) == 1, metadata_paths
 
               metadata = archive.read(metadata_paths[0]).decode("utf-8")
+              assert "Name: boilr-generator" in metadata
               assert "Requires-Python: >=3.11" in metadata
 
           required_sdist_suffixes = {
@@ -184,6 +185,7 @@ jobs:
             "$wheel_path"
 
           "$venv_python" -m pip check
+          "$venv_python" -c "from importlib.metadata import distribution, version; package=distribution('boilr-generator'); assert package.metadata['Name'] == 'boilr-generator'; assert version('boilr-generator') == package.version; print('Distribution installée :', package.metadata['Name'], package.version)"
 
           mkdir -p "$audit_root/work"
           cd "$audit_root/work"
