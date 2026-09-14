@@ -8,12 +8,16 @@ on:
       - "boilr_generator/**"
       - "tests/**"
       - "pyproject.toml"
+      - "uv.lock"
+      - ".python-version"
       - ".github/workflows/ci.yml"
   pull_request:
     paths:
       - "boilr_generator/**"
       - "tests/**"
       - "pyproject.toml"
+      - "uv.lock"
+      - ".python-version"
       - ".github/workflows/ci.yml"
 
 permissions:
@@ -40,18 +44,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          version: "0.12.13"
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
-      - name: Install dependencies
-        run: python -m pip install -e ".[dev]"
+      - name: Sync locked environment
+        run: uv sync --locked --all-groups
 
       - name: Run tests
-        run: python -m pytest -q
+        run: uv run --locked --all-groups python -m pytest -q
 
   lint:
     name: Ruff
@@ -61,18 +66,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          version: "0.12.13"
           python-version: "3.14"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
-      - name: Install dependencies
-        run: python -m pip install -e ".[dev]"
+      - name: Sync locked environment
+        run: uv sync --locked --all-groups
 
       - name: Run Ruff
-        run: python -m ruff check .
+        run: uv run --locked --all-groups ruff check .
 
   package:
     name: Build and verify distributions
@@ -82,22 +88,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          version: "0.12.13"
           python-version: "3.14"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
-      - name: Install build frontend
-        run: python -m pip install build
+      - name: Check lock file
+        run: uv lock --check
 
       - name: Build distributions
-        run: python -m build
+        run: uv build
 
       - name: Inspect distribution contents
         run: |
-          python - <<'PY'
+          uv run --locked --all-groups python - <<'PY'
           from pathlib import Path
           import tarfile
           import zipfile
@@ -120,7 +127,10 @@ jobs:
 
           with zipfile.ZipFile(wheels[0]) as archive:
               wheel_names = set(archive.namelist())
-              missing_wheel_paths = sorted(required_wheel_paths - wheel_names)
+
+              missing_wheel_paths = sorted(
+                  required_wheel_paths - wheel_names
+              )
               forbidden_wheel_paths = sorted(
                   name
                   for name in wheel_names
@@ -138,7 +148,10 @@ jobs:
               assert not forbidden_wheel_paths, forbidden_wheel_paths
               assert len(metadata_paths) == 1, metadata_paths
 
-              metadata = archive.read(metadata_paths[0]).decode("utf-8")
+              metadata = archive.read(
+                  metadata_paths[0]
+              ).decode("utf-8")
+
               assert "Name: boilr-generator" in metadata
               assert "Requires-Python: >=3.11" in metadata
 
@@ -156,7 +169,10 @@ jobs:
           missing_sdist_paths = sorted(
               suffix
               for suffix in required_sdist_suffixes
-              if not any(name.endswith(suffix) for name in sdist_names)
+              if not any(
+                  name.endswith(suffix)
+                  for name in sdist_names
+              )
           )
 
           assert not missing_sdist_paths, missing_sdist_paths
@@ -173,18 +189,22 @@ jobs:
           package_root="$PWD"
           audit_root="$RUNNER_TEMP/boilr-wheel-smoke"
 
-          python -m venv "$audit_root/venv"
+          uv venv \
+            --python "3.14" \
+            "$audit_root/venv"
 
           venv_python="$audit_root/venv/bin/python"
           wheel_path="$(find "$package_root/dist" -maxdepth 1 -name '*.whl' -print -quit)"
 
           test -n "$wheel_path"
 
-          "$venv_python" -m pip install \
-            --disable-pip-version-check \
+          uv pip install \
+            --python "$venv_python" \
             "$wheel_path"
 
-          "$venv_python" -m pip check
+          uv pip check \
+            --python "$venv_python"
+
           "$venv_python" -c "from importlib.metadata import distribution, version; package=distribution('boilr-generator'); assert package.metadata['Name'] == 'boilr-generator'; assert version('boilr-generator') == package.version; print('Distribution installée :', package.metadata['Name'], package.version)"
 
           mkdir -p "$audit_root/work"
