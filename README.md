@@ -66,14 +66,16 @@ Install Boilr:
 python -m pip install .
 ~~~
 
-The installation exposes the `boilr` command. The module entry point remains available as `python -m boilr_generator.cli`.
+The distribution name is `boilr-generator`. The installation exposes the
+`boilr` command, while the Python package remains `boilr_generator`. The
+module entry point is also available as `python -m boilr_generator.cli`.
 
 ### Development installation
 
 Install the package with its development dependencies:
 
 ~~~bash
-python -m pip install -e ".[dev]"
+uv sync --locked --all-groups
 ~~~
 
 ## Quick start
@@ -742,38 +744,38 @@ Open an issue before starting a large module contribution.
 Install development dependencies:
 
 ~~~bash
-python -m pip install -e ".[dev]"
+uv sync --locked --all-groups
 ~~~
 
 Run the complete test suite:
 
 ~~~bash
-python -m pytest -q
+uv run --locked --all-groups python -m pytest -q
 ~~~
 
 Run Ruff:
 
 ~~~bash
-python -m ruff check .
+uv run --locked --all-groups ruff check .
 ~~~
 
 Build the wheel and source distribution:
 
 ~~~bash
-python -m build
+uv build
 ~~~
 
 Run the Docker E2E test on Linux or macOS:
 
 ~~~bash
-BOILR_RUN_DOCKER_E2E=1 python -m pytest -q tests/e2e/test_docker_stack.py -m docker_e2e -W error
+BOILR_RUN_DOCKER_E2E=1 uv run --locked --all-groups python -m pytest -q tests/e2e/test_docker_stack.py -m docker_e2e -W error
 ~~~
 
 Run it in Windows PowerShell:
 
 ~~~powershell
 $env:BOILR_RUN_DOCKER_E2E = "1"
-python -m pytest -q tests\e2e\test_docker_stack.py -m docker_e2e -W error
+uv run --locked --all-groups python -m pytest -q tests\e2e\test_docker_stack.py -m docker_e2e -W error
 Remove-Item Env:BOILR_RUN_DOCKER_E2E
 ~~~
 
