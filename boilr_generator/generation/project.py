@@ -197,7 +197,7 @@ class ProjectGenerator:
             manifest=manifest,
             resolved_project=resolved_project,
             files=files,
-            generator_version=version("boilr"),
+            generator_version=version("boilr-generator"),
         )
 
         return GenerationPlan(

@@ -23,7 +23,7 @@ def test_project_generator_plan_builds_desired_state(
 
     assert state is not None
     assert state.schema_version == 1
-    assert state.generator_version == version("boilr")
+    assert state.generator_version == version("boilr-generator")
     assert state.project.name == manifest.project.name
     assert state.project.type == manifest.project.type
     assert state.project.version == manifest.project.version
