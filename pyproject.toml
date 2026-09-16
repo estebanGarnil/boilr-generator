@@ -14,6 +14,28 @@ authors = [
 license = "MIT"
 license-files = ["LICENSE"]
 
+keywords = [
+    "code-generation",
+    "docker",
+    "project-generator",
+    "scaffolding",
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Code Generators",
+]
+
 dependencies = [
     "typer>=0.12",
     "pydantic>=2,<3",
@@ -22,6 +44,12 @@ dependencies = [
     "rich>=13",
     "packaging>=24,<27",
 ]
+
+[project.urls]
+Homepage = "https://github.com/estebanGarnil/boilr-generator"
+Documentation = "https://github.com/estebanGarnil/boilr-generator/tree/main/docs"
+Repository = "https://github.com/estebanGarnil/boilr-generator"
+Issues = "https://github.com/estebanGarnil/boilr-generator/issues"
 
 [dependency-groups]
 dev = [
