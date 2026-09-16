@@ -2,6 +2,12 @@
 
 import json
 from collections import defaultdict
+from importlib.metadata import (
+    PackageNotFoundError,
+)
+from importlib.metadata import (
+    version as distribution_version,
+)
 from pathlib import Path
 from typing import Annotated
 
@@ -27,6 +33,25 @@ from boilr_generator.state import (
     build_reconciliation_plan,
 )
 
+DISTRIBUTION_NAME = "boilr-generator"
+
+
+def package_version() -> str:
+    """Return the installed Boilr distribution version."""
+    try:
+        return distribution_version(DISTRIBUTION_NAME)
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def version_callback(value: bool) -> None:
+    """Print the installed version for the eager CLI option."""
+    if not value:
+        return
+
+    typer.echo(package_version())
+    raise typer.Exit()
+
 app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode="rich",
@@ -35,6 +60,19 @@ app = typer.Typer(
 
 console = Console()
 
+@app.callback()
+def main(
+    version_requested: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=version_callback,
+            is_eager=True,
+            help="Show the installed version and exit.",
+        ),
+    ] = False,
+) -> None:
+    """Initialize the Boilr command-line interface."""
 
 def build_generator() -> ProjectGenerator:
     """Build a generator using the packaged module registry."""
