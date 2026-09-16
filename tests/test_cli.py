@@ -1,4 +1,5 @@
 import json
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,30 @@ from boilr_generator import cli
 from boilr_generator.exceptions import ManifestNotFoundError
 
 runner = CliRunner()
+
+def test_version_option_matches_distribution_metadata():
+    result = runner.invoke(
+        cli.app,
+        ["--version"],
+    )
+
+    assert result.exit_code == 0
+    assert (
+        result.output.strip()
+        == version("boilr-generator")
+    )
+
+
+def test_root_help_exposes_version_option():
+    result = runner.invoke(
+        cli.app,
+        ["--help"],
+    )
+
+    assert result.exit_code == 0
+    assert "--version" in Text.from_ansi(
+        result.output
+    ).plain
 
 def snapshot_output(
     output_path: Path,
