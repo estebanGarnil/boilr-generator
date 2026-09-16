@@ -793,7 +793,7 @@ CI validates:
 
 ## Project status and roadmap
 
-Version 0.1.0 is functional and under active development.
+Version 0.1.1 is functional and under active development.
 
 The current engine supports:
 
