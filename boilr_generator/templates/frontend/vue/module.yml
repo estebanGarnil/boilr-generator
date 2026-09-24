@@ -1,0 +1,80 @@
+meta:
+  name: Vue
+  key: vue
+  type: frontend
+  version: 1.0.0
+  description: Vue 3 and Vite frontend for Docker development
+  tags: [vue, vite, javascript, frontend]
+role:
+  group: frontend
+provides:
+  - capability: frontend.web
+    values:
+      framework: vue
+      service: frontend
+      host: frontend
+      port: 5173
+      published_port: "{{ frontend_port }}"
+variables:
+  project_name:
+    type: string
+    default: Boilr Vue
+    description: Title displayed in the application
+  frontend_port:
+    type: int
+    default: 5173
+    description: Published frontend port
+  api_proxy_target:
+    type: string
+    default: ""
+    description: Optional server-side proxy target, e.g. http://backend:8000
+options:
+  polling:
+    type: boolean
+    default: false
+    description: Enable file polling for Docker Desktop or WSL mounts
+assembly:
+  priority: 100
+  destination_root: frontend
+sources:
+  copy:
+    - id: application
+      from: files/app
+      to: frontend
+      strategy: merge
+    - id: frontend-readme
+      from: docs/FRONTEND.md
+      to: frontend/README.md
+      strategy: merge
+  render:
+    - id: vite-config
+      from: files/templates/vite.config.js.j2
+      to: frontend/vite.config.js
+    - id: application-config
+      from: files/templates/app-config.js.j2
+      to: frontend/src/app-config.js
+docker:
+  services:
+    frontend:
+      build:
+        context: ./frontend
+        dockerfile: Dockerfile
+      init: true
+      working_dir: /app
+      command: sh -c "npm ci --no-audit --no-fund && npm run dev"
+      volumes:
+        - ./frontend:/app
+        - vue_node_modules:/app/node_modules
+      ports:
+        - "127.0.0.1:{{ frontend_port }}:5173"
+      environment:
+        BOILR_API_PROXY_TARGET: "{{ api_proxy_target }}"
+  volumes:
+    vue_node_modules: {}
+docs:
+  summary: Standalone Vue 3 + Vite development frontend
+  notes:
+    - Documentation and examples in docs/README.md
+    - Optional /api proxy preserves the request path
+    - No backend or database required
+    - Docker service is intended for local development

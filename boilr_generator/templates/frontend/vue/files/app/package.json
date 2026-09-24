@@ -1,0 +1,21 @@
+{
+  "name": "boilr-vue-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "vite": "8.3.1",
+    "@vitejs/plugin-vue": "6.0.9"
+  }
+}

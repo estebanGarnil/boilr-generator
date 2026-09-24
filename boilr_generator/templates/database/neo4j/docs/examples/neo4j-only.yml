@@ -1,0 +1,10 @@
+project:
+  name: neo4j_demo
+  type: graph
+  version: "1.0.0"
+modules:
+  - key: neo4j
+    variables:
+      neo4j_password: dev-graph-password
+      neo4j_http_port: 7474
+      neo4j_bolt_port: 7687
