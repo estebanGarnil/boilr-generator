@@ -1,0 +1,29 @@
+project:
+  name: fullstack_demo
+  type: fullstack_web
+  version: "1.0.0"
+modules:
+  - key: postgres
+    variables:
+      db_name: fullstack_demo
+      db_user: fullstack_demo
+      db_password: dev-password-change-me
+      db_port: 5432
+  - key: django
+    variables:
+      project_name: fullstack_demo
+      secret_key: dev-secret-change-me
+      backend_port: 8000
+      debug: true
+      allowed_hosts: [localhost, 127.0.0.1, backend]
+    options:
+      rest_framework: true
+      cors: false
+  - key: django-postgres
+  - key: vue
+    variables:
+      project_name: Mon application fullstack
+      frontend_port: 5173
+      api_proxy_target: http://backend:8000
+    options:
+      polling: false

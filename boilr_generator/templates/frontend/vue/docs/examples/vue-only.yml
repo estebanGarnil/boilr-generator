@@ -1,0 +1,11 @@
+project:
+  name: vue_demo
+  type: frontend_web
+  version: "1.0.0"
+modules:
+  - key: vue
+    variables:
+      project_name: Mon application Vue
+      frontend_port: 5173
+    options:
+      polling: false

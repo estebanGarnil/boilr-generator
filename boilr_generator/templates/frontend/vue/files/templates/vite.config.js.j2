@@ -1,0 +1,24 @@
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+export default defineConfig(() => {
+  const target = process.env.BOILR_API_PROXY_TARGET || {{ api_proxy_target | tojson }}
+  if (target && !/^https?:\/\//.test(target)) {
+    throw new Error('BOILR_API_PROXY_TARGET must start with http:// or https://')
+  }
+  return {
+    plugins: [vue()],
+    server: {
+      host: '0.0.0.0',
+      port: 5173,
+      strictPort: true,
+      watch: { usePolling: {{ options.polling | tojson }} },
+      proxy: target ? {
+        '/api': {
+          target,
+          changeOrigin: true,
+        },
+      } : undefined,
+    },
+  }
+})
